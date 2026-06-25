@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "crates/cloud-ssh-core",
+    "crates/cloud-ssh-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+authors = ["wh1isper"]
+license = "BSD-3-Clause"
+repository = "https://github.com/Wh1isper/cloud-ssh"
+homepage = "https://github.com/Wh1isper/cloud-ssh"
+description = "Collaborative terminal room runtime for classic SSH and browser clients"
+readme = "README.md"
+keywords = ["ssh", "terminal", "pty", "collaboration"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+cloud-ssh-core = { path = "crates/cloud-ssh-core", version = "0.0.1" }
+
+clap = { version = "4.5.51", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "signal"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+unwrap_used = "warn"
+expect_used = "warn"

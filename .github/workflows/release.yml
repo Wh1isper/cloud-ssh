@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux-binary:
+    name: Build Linux binary
+    runs-on: ubuntu-latest
+    environment: Release
+    env:
+      TARGET: x86_64-unknown-linux-gnu
+      ARCHIVE: cloud-ssh-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        run: |
+          cargo build --release --locked -p cloud-ssh-server --bin cloud-ssh --target "$TARGET"
+          mkdir -p dist
+          cp "target/$TARGET/release/cloud-ssh" dist/
+          tar -czf "$ARCHIVE" -C dist cloud-ssh
+
+      - name: Generate checksum
+        run: sha256sum "$ARCHIVE" > checksums.txt
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$ARCHIVE" checksums.txt --clobber --repo "${{ github.repository }}"

@@ -1,0 +1,23 @@
+[book]
+title = "Cloud SSH"
+description = "Collaborative terminal room runtime documentation"
+authors = ["Wh1isper"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Wh1isper/cloud-ssh"
+edit-url-template = "https://github.com/Wh1isper/cloud-ssh/edit/main/{path}"
+site-url = "/"
+additional-js = ["docs/mermaid-init.js"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.print]
+enable = false

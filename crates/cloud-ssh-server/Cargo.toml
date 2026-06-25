@@ -1,0 +1,25 @@
+[package]
+name = "cloud-ssh-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Cloud SSH server binary"
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "cloud-ssh"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+cloud-ssh-core.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

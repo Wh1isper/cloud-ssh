@@ -1,0 +1,10 @@
+[
+  {
+    "label": "Getting Started",
+    "items": ["index", "development"]
+  },
+  {
+    "label": "Runtime",
+    "items": ["architecture"]
+  }
+]

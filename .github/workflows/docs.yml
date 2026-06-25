@@ -1,0 +1,44 @@
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - "book.toml"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+      - "Makefile"
+  push:
+    branches: [main]
+    paths:
+      - "book.toml"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+      - "Makefile"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install mdBook
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.3
+
+      - name: Build docs site
+        run: make docs-build
