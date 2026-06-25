@@ -46,6 +46,15 @@ Current output is a placeholder while the runtime is being scaffolded.
 
 Architecture and product decisions live in [spec/](spec/). User-facing guides live in [docs/](docs/).
 
+## Docker Images
+
+The service image is published to GCR by GitHub Actions.
+
+- Nightly builds run from `main` and publish `nightly`, `nightly-<sha>`, and `main-<sha>` tags.
+- Release builds run when a GitHub Release is published and publish `vX.Y.Z`, `X.Y.Z`, and `latest` for stable releases.
+
+The GCR project and image name are configured through the `Release` GitHub environment.
+
 ## Validation
 
 ```bash

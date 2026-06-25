@@ -39,6 +39,11 @@ build: ## Build the workspace
 	@echo "Building Rust workspace"
 	@cargo build --workspace --all-targets --all-features --locked
 
+.PHONY: docker-build
+docker-build: ## Build the service Docker image locally; set DOCKER_IMAGE=cloud-ssh:dev to override
+	@echo "Building Docker image"
+	@docker build -t $${DOCKER_IMAGE:-cloud-ssh:dev} .
+
 .PHONY: docs-build
 docs-build: ## Build the static documentation site
 	@echo "Building docs site"
