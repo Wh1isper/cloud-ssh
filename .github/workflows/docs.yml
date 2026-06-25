@@ -65,13 +65,37 @@ jobs:
           name: docs-site
           path: book
 
-      - name: Create Cloudflare Pages project
-        continue-on-error: true
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages project create ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME || 'cloud-ssh-docs' }} --production-branch=main
+      - name: Ensure Cloudflare Pages project
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME || 'cloud-ssh-docs' }}
+        run: |
+          api_base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects"
+          status="$(
+            curl -sS -o /tmp/cloudflare-pages-project.json -w "%{http_code}" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "$api_base/$CLOUDFLARE_PAGES_PROJECT_NAME"
+          )"
+
+          if [ "$status" = "200" ]; then
+            echo "Cloudflare Pages project already exists: $CLOUDFLARE_PAGES_PROJECT_NAME"
+            exit 0
+          fi
+
+          if [ "$status" != "404" ]; then
+            cat /tmp/cloudflare-pages-project.json
+            exit 1
+          fi
+
+          python3 -c 'import json, os; print(json.dumps({"name": os.environ["CLOUDFLARE_PAGES_PROJECT_NAME"], "production_branch": "main"}))' \
+            >/tmp/cloudflare-pages-create.json
+
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/cloudflare-pages-create.json \
+            "$api_base" >/tmp/cloudflare-pages-project-created.json
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
