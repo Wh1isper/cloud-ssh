@@ -1,0 +1,14 @@
+[package]
+name = "owlmux-relay"
+version.workspace = true
+edition.workspace = true
+description = "Target-side reverse connection client for OwlMux"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["ssh", "terminal", "tmux", "relay"]
+categories = ["command-line-utilities", "network-programming"]
+publish = false
+
+[lints]
+workspace = true

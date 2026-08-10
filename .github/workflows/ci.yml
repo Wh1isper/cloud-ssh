@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Source and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install pnpm
+        run: npm install --global pnpm@11.20.0
+      - name: Install locked JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check Web sources
+        run: pnpm check
+      - name: Test Web sources
+        run: pnpm test
+      - name: Build Web application
+        run: pnpm build
+      - name: Build documentation
+        run: pnpm docs:build
+      - name: Verify documentation deployment
+        run: |
+          test -f docs/.vitepress/dist/sitemap.xml
+          test -f docs/.vitepress/dist/robots.txt
+          grep -q 'https://owlmux-docs.owlfoundry.org/' docs/.vitepress/dist/sitemap.xml
+          grep -qx 'Sitemap: https://owlmux-docs.owlfoundry.org/sitemap.xml' docs/.vitepress/dist/robots.txt
+          pnpm --filter @owlmux/docs run deploy --dry-run
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+      - name: Lint Rust sources
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test Rust sources
+        run: cargo test --workspace --all-features --locked
+      - name: Build both release binaries
+        run: cargo build --release --locked --package owlmux-server --package owlmux-relay
+      - name: Verify Compose configuration
+        run: docker compose --file dev/compose.yml config --quiet
+      - name: Check Markdown links
+        run: python3 scripts/check-markdown-links.py
+      - name: Check repository boundaries
+        run: python3 scripts/check-repository.py
+
+  server-image:
+    name: Server image
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build Server image
+        run: |
+          docker build \
+            --build-arg OWLMUX_VERSION=ci \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --tag owlmux:ci \
+            .
+      - name: Smoke-test Server image
+        run: scripts/docker/smoke-server-image.sh owlmux:ci

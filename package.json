@@ -1,0 +1,18 @@
+{
+  "name": "owlmux",
+  "version": "0.0.0-dev",
+  "private": true,
+  "description": "Terminal roaming with target-owned tmux sessions",
+  "license": "BSD-3-Clause",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "build": "pnpm --filter @owlmux/web build",
+    "check": "pnpm --filter @owlmux/web check",
+    "dev": "pnpm --filter @owlmux/web dev",
+    "docs:build": "pnpm --filter @owlmux/docs build",
+    "docs:deploy": "pnpm --filter @owlmux/docs deploy",
+    "docs:dev": "pnpm --filter @owlmux/docs dev",
+    "format": "pnpm --filter @owlmux/web format",
+    "test": "pnpm --filter @owlmux/web test"
+  }
+}

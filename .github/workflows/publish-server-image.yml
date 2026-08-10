@@ -1,0 +1,44 @@
+name: Publish Server Image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: server-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish development Server image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build Server image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          image="${IMAGE,,}"
+          docker build --pull \
+            --build-arg "OWLMUX_VERSION=$GITHUB_SHA" \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "SOURCE_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$image:dev" \
+            .
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish development image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: docker push "${IMAGE,,}:dev"

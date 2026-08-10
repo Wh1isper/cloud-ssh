@@ -1,0 +1,25 @@
+[package]
+name = "owlmux-server"
+version.workspace = true
+edition.workspace = true
+description = "Public server foundation for OwlMux terminal roaming"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["ssh", "terminal", "tmux", "self-hosted"]
+categories = ["web-programming::http-server"]
+publish = false
+
+[dependencies]
+axum = "0.8.9"
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.7.0", features = ["fs", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }
+
+[lints]
+workspace = true

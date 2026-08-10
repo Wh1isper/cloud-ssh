@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - name: Resolve release names
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          version="${RELEASE_TAG#v}"
+          host="x86_64-unknown-linux-gnu"
+          {
+            echo "version=$version"
+            echo "host=$host"
+            echo "image-tag=${version//+/_}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build Server and Relay
+        run: cargo build --release --locked --package owlmux-server --package owlmux-relay
+      - name: Package binary archives
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          HOST: ${{ steps.release.outputs.host }}
+        run: |
+          mkdir -p dist/server dist/relay
+          cp target/release/owlmux-server dist/server/
+          cp target/release/owlmux-relay dist/relay/
+          cp LICENSE dist/server/LICENSE
+          cp LICENSE dist/relay/LICENSE
+          cp crates/owlmux-server/README.md dist/server/README.md
+          cp crates/owlmux-relay/README.md dist/relay/README.md
+          tar -czf "dist/owlmux-server-${VERSION}-${HOST}.tar.gz" -C dist/server owlmux-server LICENSE README.md
+          tar -czf "dist/owlmux-relay-${VERSION}-${HOST}.tar.gz" -C dist/relay owlmux-relay LICENSE README.md
+          (
+            cd dist
+            sha256sum owlmux-*.tar.gz > SHA256SUMS
+          )
+      - name: Build release Server image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          image="${IMAGE,,}"
+          docker build --pull \
+            --build-arg "OWLMUX_VERSION=$VERSION" \
+            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "SOURCE_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$image:$IMAGE_TAG" \
+            .
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish release Server image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
+        run: |
+          image="${IMAGE,,}"
+          docker push "$image:$IMAGE_TAG"
+      - name: Promote final release image to latest
+        if: github.event.release.prerelease == false
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
+        run: |
+          image="${IMAGE,,}"
+          docker tag "$image:$IMAGE_TAG" "$image:latest"
+          docker push "$image:latest"
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/owlmux-*.tar.gz dist/SHA256SUMS --clobber

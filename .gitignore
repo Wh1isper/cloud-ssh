@@ -1,0 +1,17 @@
+/target/
+/node_modules/
+**/node_modules/
+/apps/web/dist/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+**/.wrangler/
+/coverage/
+/dist/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
