@@ -2,7 +2,7 @@
 name = "owlmux-server"
 version.workspace = true
 edition.workspace = true
-description = "Public server foundation for OwlMux terminal roaming"
+description = "Symmetric server-node foundation for OwlMux terminal roaming"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"

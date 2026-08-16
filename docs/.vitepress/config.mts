@@ -44,7 +44,7 @@ export default defineConfig({
         items: [
           { text: "Getting started", link: "/guide/getting-started" },
           { text: "Architecture", link: "/guide/architecture" },
-          { text: "Authentication and organizations", link: "/guide/authentication" },
+          { text: "Deployment access and credentials", link: "/guide/authentication" },
           { text: "Relay and roaming", link: "/guide/relay" },
           { text: "Deployment", link: "/guide/deployment" },
           { text: "Development", link: "/guide/development" },

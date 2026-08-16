@@ -1,15 +1,14 @@
 # Getting started
 
 OwlMux is currently a foundation, not a usable terminal roaming product. This
-guide builds the placeholder Web application and Rust binaries and lets you
-inspect the repository boundary without implying that Relay, SSH, or tmux works.
+guide builds the placeholder Web application and Rust binaries and lets you inspect the repository boundary without implying that Server clustering, authentication, Machine ownership, Relay, SSH, or tmux works.
 
 ## Prerequisites
 
 - stable Rust from `rust-toolchain.toml`;
 - Node.js 24;
 - pnpm 11.20.0;
-- Docker with Compose v2 for PostgreSQL/Redis and image checks.
+- Docker with Compose v2 for PostgreSQL and image checks.
 
 ## Install locked dependencies
 
@@ -63,11 +62,11 @@ make dev-status
 make dev-down
 ```
 
-The Compose file starts PostgreSQL and Redis for future delivery blocks. The
-foundation Server does not connect to them yet.
+The Compose file starts PostgreSQL for future product and low-churn node/owner coordination. The foundation Server does not connect to it yet.
 
 ## Read the target design
 
 Start with the [architecture guide](architecture.md), then review the normative
-[specifications](https://github.com/owlfoundry/owlmux/tree/main/spec). Capability
-is considered implemented only after its delivery block and end-to-end gate pass.
+[specifications](https://github.com/owlfoundry/owlmux/tree/main/spec). A capability
+is considered implemented only after the required evidence in its owning
+specification passes end to end.

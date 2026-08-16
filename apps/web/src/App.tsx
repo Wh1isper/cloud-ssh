@@ -5,7 +5,8 @@ const foundations = [
   },
   {
     title: "Outbound Relay",
-    detail: "A small target-side client connects outward and carries SSH back to OwlMux Server.",
+    detail:
+      "A small target-side client connects outward through one Deployment origin and carries SSH back to its Server owner.",
   },
   {
     title: "Web roaming",
@@ -38,7 +39,7 @@ export function App() {
         <h1>Your tmux sessions stay where they belong.</h1>
         <p className="lede">
           OwlMux is a self-hosted Web client and reverse connection path for target-owned tmux. The
-          browser can leave. The Server can restart. Your process remains on your machine.
+          browser can leave. A Server node can restart. Your process remains on your machine.
         </p>
         <div className="actions">
           <a
@@ -78,9 +79,9 @@ export function App() {
           <h2 id="status-heading">A clean product foundation</h2>
         </div>
         <p>
-          This build intentionally contains no login, machine registration, Relay tunnel, SSH, or
-          tmux integration yet. Those capabilities land only after their end-to-end acceptance gates
-          pass.
+          This build intentionally contains no login, Server clustering, machine registration, Relay
+          tunnel, SSH, or tmux integration yet. Those capabilities land only after their end-to-end
+          acceptance gates pass.
         </p>
       </section>
     </main>

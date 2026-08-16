@@ -4,9 +4,9 @@
 
 ```text
 apps/web/             React and Vite placeholder application
-crates/owlmux-server/ public Server placeholder
+crates/owlmux-server/ symmetric public/internal Server-node placeholder
 crates/owlmux-relay/  target-side Relay placeholder
-dev/                  PostgreSQL and Redis Compose infrastructure
+dev/                  PostgreSQL Compose infrastructure
 docs/                 VitePress documentation and Workers configuration
 spec/                 normative target product specifications
 ```
@@ -39,11 +39,11 @@ OwlMux failure means attachment loss, never target tmux cleanup.
 ## Code boundaries
 
 - Server and Relay are the only runtime crates in the foundation.
-- Do not create empty abstraction crates before real sharing exists.
+- Do not create empty abstraction crates or split Gateway/Worker/scheduler services before real ownership boundaries exist.
 - Web source belongs under `apps/web`.
-- PostgreSQL is durable authority and Redis is disposable cache once implemented.
-- Secret custody is statically composed; do not add a dynamic KMS framework.
+- PostgreSQL is the only durable product authority and future low-churn node/owner registry; node-local admission and current-owner Relay/SSH/tmux/writer state stay bounded in process memory.
+- Relay state always stays on the Server node that accepted and claimed it. Browser/Machine-affine API routing may use at most one internal owner WSS hop. Do not implement Relay proxying, a scheduler, or owner rebalance.
+- SSH private-key encryption is one fixed local XChaCha20-Poly1305 path; do not add a provider abstraction, KMS/HSM framework, KDF, or encryption-key-management surface.
 - Release workflows publish CI-qualified commits and do not rerun CI.
 
-See [AGENTS.md](https://github.com/owlfoundry/owlmux/blob/main/AGENTS.md) for the
-complete repository guide.
+See [AGENTS.md](https://github.com/owlfoundry/owlmux/blob/main/AGENTS.md) for the complete repository guide.

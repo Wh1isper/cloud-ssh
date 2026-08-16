@@ -57,7 +57,7 @@ docs-deploy: ## Deploy documentation to Cloudflare Workers
 	@pnpm docs:deploy
 
 .PHONY: dev-up
-dev-up: ## Start PostgreSQL and Redis development infrastructure
+dev-up: ## Start PostgreSQL development infrastructure
 	@$(DEV_COMPOSE) up --detach --wait
 
 .PHONY: dev-down

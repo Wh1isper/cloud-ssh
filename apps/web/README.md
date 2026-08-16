@@ -2,6 +2,4 @@
 
 Placeholder React application for the OwlMux foundation.
 
-The current page communicates the target-owned tmux boundary and does not pretend
-to implement authentication, organizations, machine registration, Relay, SSH, or
-tmux functionality.
+The current page communicates the target-owned tmux boundary and does not pretend to implement Deployment API-key access, Server-owner routing, Machine registration, Relay, SSH, or tmux functionality.

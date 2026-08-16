@@ -1,31 +1,59 @@
 # Relay and roaming
 
 ::: warning Target design
-Relay enrollment, reverse transport, SSH, tmux control mode, and browser roaming
-are not implemented in the current foundation.
+Relay enrollment, reverse transport, accepting-ingress Machine ownership, SSH, tmux control mode, and Browser roaming are not implemented in the current foundation.
 :::
 
 ## Why Relay exists
 
-A target machine may not have a public address or inbound firewall rule. OwlMux
-Relay will open an authenticated outbound WebSocket-over-TLS connection to the
-public Server, normally over TCP 443.
+A target machine may not have a public address or inbound firewall rule. OwlMux Relay will open an authenticated outbound WebSocket-over-TLS connection to one Deployment origin, normally over TCP 443.
 
-Server will open a logical stream through that tunnel to the Relay's enrolled
-loopback sshd endpoint. A normal SSH handshake still ends at target sshd, so the
-target host key and Unix account remain authoritative.
+Any Serving Server node may accept that public connection. Ordinary load balancing determines the ingress. After Relay authentication, that exact accepting incarnation is the only node allowed to claim the Machine in PostgreSQL under a new monotonic connection epoch, and it holds the tunnel plus all Machine-affine state locally.
+
+The owner opens logical streams through that tunnel to the Relay's enrolled loopback sshd endpoint. A normal SSH handshake still ends at target sshd, so the target host key and Unix account remain authoritative.
 
 ```mermaid
 flowchart LR
-    browser["Browser"] --> server["Public Server"]
-    relay["Target Relay"] -->|"outbound tunnel"| server
-    server -->|"SSH stream"| relay
+    browser["Browser"] --> origin["Deployment origin"]
+    relay["Target Relay"] -->|"outbound tunnel"| origin
+    origin --> owner["Accepting Server and Machine owner"]
+    owner -->|"owner-local SSH stream"| relay
     relay --> sshd["127.0.0.1:22"]
     sshd --> tmux["Target tmux"]
 ```
 
-This is reverse relaying, not P2P NAT hole punching. Traffic remains on the Server
-path.
+This is reverse relaying, not P2P NAT hole punching. Traffic remains on the Server path. Relay never receives an internal node address or cluster credential.
+
+## Enrollment through any node
+
+Relay enrollment sends the one-use token alone in its first bounded frame to the Deployment origin. The ingress node:
+
+1. allocates only fixed pre-token state;
+2. requires the exact initial Relay protocol version;
+3. verifies and clears the token candidate;
+4. in one transaction locks `DEPLOYMENT` first, rechecks exact configuration/build/protocol, then locks the pending Machine/enrollment and executing Server-incarnation row, rechecks post-lock PostgreSQL time plus the exact Serving lease, atomically consumes the digest, and creates one deadline-bounded `Verifying` attempt;
+5. returns the immutable Deployment/Machine IDs so Relay can persist them with its already persisted candidate Relay ID/key before setup;
+6. retains bounded setup, fresh challenge, and verified proof state only on that same live connection.
+
+There is no OwlMux node selection, internal enrollment forwarding, token forwarding, persisted coordinator/challenge/proof, or resume on another connection.
+
+The connection accepts exactly one setup frame covering the candidate Relay ID/public key, endpoint, account, host candidates, and exact protocol version. Server returns the selected SSH credential's public metadata separately. After the target administrator confirms readiness in Relay CLI, Server opens one independent proof stream and runs the closed fixed no-tmux `VerifySshAccess` operation; only its exact constant marker followed by clean zero exit proves SSH host/account/key acceptance.
+
+Final activation locks `DEPLOYMENT` first, rechecks exact configuration/build/protocol, then locks the exact attempt, Machine/credential, and executing Server-incarnation row. Under that Deployment lock plus database partial unique constraints, post-lock PostgreSQL current time must show an unexpired attempt, no other active binding for the Relay ID/public key, and an exact Serving, lease-valid, config/build/protocol-current node before the transaction creates the active Relay binding. A query delayed across attempt/node lease expiry, drain, fence, replacement, active-identity conflict, or configuration change cannot activate durable trust. The accepting node then claims itself as current Machine owner before ordinary logical streams open. If activation or owner reporting is ambiguous, Relay closes and reconnects with the IDs/key it persisted before setup; it never replays the enrollment token, setup, or activation blindly.
+
+Known setup/proof/connection failure or attempt expiry returns the Machine to tokenless `Pending` through protected recovery; a new token must be issued explicitly. An expired crash residue may be recovered safely without resurrecting the old token. A Relay ID or Ed25519 public key may appear in at most one active Machine binding; OwlMux does not retain a permanent registry of invalidated Relay identities.
+
+Active re-enrollment first fences the current owner, invalidates the old Relay binding, increments the route revision, and returns the same fixed host/account/socket Machine to tokenless `Pending`; issuing a new one-use token is a following explicit action. It never accepts a changed target identity in place.
+
+## Active tunnel ownership
+
+An active Relay reconnect authenticates its Machine-bound Ed25519 transcript at any ingress node. Ingress clears proof buffers and attempts to claim only its own exact incarnation:
+
+- if no valid owner exists, the claim creates a higher connection epoch and the tunnel stays local;
+- if the same owner knows its previous tunnel is closed, it first closes the dispatch barrier and fences all old-epoch local state, then CAS-releases and makes a fresh claim;
+- if any other valid owner remains, ingress returns `temporarily_unavailable` with a capped `retry_after` and never proxies, steals, or remotely evicts it.
+
+A valid but unreachable owner is not bypassed. The deployment operator fences/stops/isolates that owner node, waits for PostgreSQL lease expiry, and lets Relay retry. Node join affects only later connections and OwlMux has no rebalance or balance guarantee. Old logical streams, SSH bytes, and pending operations never migrate or replay.
 
 ## What Relay will not do
 
@@ -34,21 +62,25 @@ Relay will not:
 - start a shell or coding agent;
 - create a PTY;
 - run tmux commands;
+- modify `authorized_keys`, `AuthorizedKeysCommand`, sshd configuration, target accounts, or another target authorization store;
+- invoke a package manager or install, upgrade, downgrade, configure, patch, or repair tmux;
 - inspect SSH plaintext;
 - forward arbitrary target-network destinations;
-- terminate a process when its tunnel expires;
+- choose, know, or request a Server owner;
+- accept or use the Deployment API key or cluster key;
+- terminate a process when its tunnel or owner lease expires;
 - preserve one SSH byte stream across reconnect.
 
-Tunnel loss closes attachments only. tmux continues on the target.
+Tunnel, owner-node, or database loss closes OwlMux attachments only. tmux continues on the target.
 
 ## Graphical tmux
 
-Server will run a constrained OpenSSH child and enter tmux control mode. It will
-translate target sessions, windows, panes, layouts, and output into typed
-WebSocket events. The browser will render each pane with xterm.js.
+OwlMux stores the generated Ed25519 Deployment credential selected for the Machine and presents Server-derived public-key metadata. It accepts no private-key upload or alternate key algorithm. The target administrator exclusively owns public-key installation and removal through external operational tooling. Relay never modifies target authorization stores; enrollment only opens a bounded proof path so the accepting Server can verify the exact credential after readiness confirmation.
 
-After reconnect, OwlMux will query and hydrate target state again. It will not
-replay ambiguous input or rely on a central output journal.
+The current owner runs a constrained OpenSSH child and enters tmux control mode through a closed typed remote-entry renderer. The target administrator must install and operate tmux; OwlMux detects and explains missing or incompatible tmux but never installs or changes it. The minimum target baseline is tmux 3.2a. Server checks a small known-bad denylist and bounded required capabilities before a writable workspace, while representative CI covers selected maintained packages, one current release, qualified shells, and Relay-backed Browser E2E. The initial Relay protocol accepts one exact version without negotiation or a compatibility manifest; policy for older versions waits until a second protocol version exists.
 
-Read the normative [Relay specification](https://github.com/owlfoundry/owlmux/blob/main/spec/05-connectivity-and-relay.md)
-and [tmux specification](https://github.com/owlfoundry/owlmux/blob/main/spec/03-tmux-control-and-roaming.md).
+The owner translates target sessions, windows, panes, layouts, and output into typed Browser messages. A non-owner Browser ingress uses at most one bounded internal owner WSS hop. Machine-affine one-shot API requests use the same destination-challenge/HMAC WSS mode; Relay never does. The browser renders each pane with xterm.js and never selects a node.
+
+After reconnect and only once no valid old owner remains, the accepting Relay node may claim a new Machine epoch and query/hydrate target state again. It will not replay ambiguous input or rely on a central output journal.
+
+Read the normative [Relay enrollment and transport specification](https://github.com/owlfoundry/owlmux/blob/main/spec/03-relay-enrollment-and-transport.md) and [SSH/tmux attachment specification](https://github.com/owlfoundry/owlmux/blob/main/spec/04-ssh-tmux-attachment-and-roaming.md).

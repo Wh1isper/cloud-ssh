@@ -1,7 +1,6 @@
 # owlmux-server
 
-Placeholder public server for the OwlMux foundation.
+Placeholder symmetric public/internal Server-node binary for the OwlMux foundation.
 
 The current crate serves `/health`, `/ready`, and the placeholder Web application.
-Authentication, organizations, machines, Relay connectivity, SSH, and tmux are
-specified but not implemented yet.
+Deployment API-key access, node membership, Relay-ingress-local Machine ownership, Browser/Machine-affine API owner WSS routing, Machines, Relay connectivity, SSH, and tmux are specified but not implemented yet.

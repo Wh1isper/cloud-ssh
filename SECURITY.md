@@ -17,6 +17,4 @@ including real credentials, terminal contents, SSH keys, or personal data.
 
 ## Current scope
 
-The current foundation exposes only placeholder static assets plus `/health` and
-`/ready`; Relay transport is not implemented. The target security model is
-normative in [`spec/06-identity-authorization-and-security.md`](spec/06-identity-authorization-and-security.md).
+The current foundation exposes only placeholder static assets plus `/health` and `/ready`; Server clustering, product authentication, Relay transport, SSH, and tmux integration are not implemented. The target threat model is normative in [`spec/08-operations-security-and-resilience.md`](spec/08-operations-security-and-resilience.md), with deployment access in [`spec/05-deployment-access-and-authentication.md`](spec/05-deployment-access-and-authentication.md) and private-key encryption in [`spec/06-storage-consistency-and-private-key-encryption.md`](spec/06-storage-consistency-and-private-key-encryption.md).
