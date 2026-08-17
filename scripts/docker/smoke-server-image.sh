@@ -89,12 +89,12 @@ docker run --detach --name "$postgres_name" --network "$network" \
   --env POSTGRES_USER=owlmux \
   postgres:17.10-alpine >/dev/null
 for _ in {1..30}; do
-  if docker exec "$postgres_name" pg_isready --username owlmux --dbname owlmux >/dev/null 2>&1; then
+  if docker exec "$postgres_name" pg_isready --host 127.0.0.1 --port 5432 --username owlmux --dbname owlmux >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec "$postgres_name" pg_isready --username owlmux --dbname owlmux >/dev/null
+docker exec "$postgres_name" pg_isready --host 127.0.0.1 --port 5432 --username owlmux --dbname owlmux >/dev/null
 
 docker run --detach --name "$name" --network "$network" --publish 127.0.0.1::8080 \
   --env OWLMUX_PUBLIC_ORIGIN=http://127.0.0.1:8080 \
