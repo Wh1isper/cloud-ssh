@@ -3,7 +3,7 @@
 ## Repository layout
 
 ```text
-apps/web/             React control plane and read-only xterm.js workspace
+apps/web/             React control plane and interactive xterm.js workspace
 contracts/            reviewed public, Relay v1, and attachment v1 schemas and fixtures
 crates/owlmux-server/ single-node Deployment, Relay ingress, SSH/tmux, API, and attachment runtime
 crates/owlmux-relay/  target-side enrolled reverse-connection runtime
@@ -32,18 +32,20 @@ make docker-build       # build and smoke-test the Server image
 
 ## Current delivery boundary
 
-Blocks 0–3 are current behavior in the single-node profile:
+The following is current behavior in the pre-release single-node and clustered profiles:
 
 - reviewed/generated contracts, immutable typed configuration, Linux boot clock, cancellation, and bounded shutdown;
-- Deployment initialization, fenced node lease, API-key control plane, generated encrypted SSH credentials, Machines, one-use tokens, and safe audit;
+- Deployment initialization, fenced node lease, API-key control plane, generated encrypted SSH credentials, complete Machine/Relay lifecycle transactions, active-Machine credential rebind, one-use tokens, bounded safe audit presentation, and low-cardinality metrics;
 - Relay candidate identity custody, token-only enrollment, signed activation/tunnel transcripts, bounded logical streams, actual owner claim, re-enrollment, revoke/disable fencing, and drain;
-- exact-Origin/first-frame attachment authentication, constrained OpenSSH, separate tmux client/server version and session probes, fresh explicit chooser, read-only control mode, target-authoritative visible-pane layout, qualified final-capture/live cutover with continuous-token stress evidence, chunked binary-safe snapshots/live output, projection refresh, and xterm.js rendering.
+- exact-Origin/first-frame attachment authentication, constrained OpenSSH, separate tmux client/server version and session probes, fresh explicit chooser, writer/read-only-observer control modes, target-authoritative visible-pane layout, qualified final-capture/live cutover with continuous-token stress evidence, chunked binary-safe snapshots/live output, projection refresh, and xterm.js rendering;
+- one route-scoped owner-local writer pointer, serialized claim/takeover, session create/refresh/select, observed window/pane selection, bounded active-pane input, authoritative writer resize, stale-writer fencing, and no replay of ambiguous mutations;
+- exact-build/config symmetric membership, clustered configuration proof, private-CA internal TLS/WSS, fresh destination-challenge HMAC, one-hop remote attachment/invalidation routing, unreachable-owner behavior, protected ambiguous-commit observation, lease-fenced multi-node recovery, and cold API/configuration rotation evidence.
 
-Writable pane input, session/window/pane mutations, writer takeover, clustered configuration proof, internal owner WSS, and multi-node acceptance remain later delivery blocks. Do not describe them as current.
+Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium, dependency audits, recovery exercises, and the production Server image. Publication remains tag-driven and CI-owned. No production-supported version or platform outside this explicit matrix is claimed.
 
 ## Design workflow
 
-`spec/` is normative. Public docs distinguish current tested behavior from accepted target design. A capability becomes current behavior only after its reviewed versioned contract, durable invariants, implementation, and real acceptance evidence land together. CI runs PostgreSQL integration plus the complete Docker and Chromium E2E against Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b.
+`spec/` is normative. Public docs distinguish current tested behavior from accepted target design. A capability becomes current behavior only after its reviewed versioned contract, durable invariants, implementation, and real acceptance evidence land together. CI runs production JavaScript and RustSec dependency audits, PostgreSQL integration, the single-node and two-node clustered Docker E2E, the production-image content smoke, and the complete Chromium/tmux matrix against Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b. The sole RustSec ignore is a documented lock-only optional RSA dependency absent from the all-target build graph.
 
 Keep the central invariant visible in every change:
 
@@ -56,8 +58,8 @@ OwlMux failure means attachment loss, never target tmux cleanup.
 - Server and Relay are the only runtime crates.
 - Do not create empty abstraction crates or split Gateway/Worker/scheduler services.
 - PostgreSQL is the only durable product authority. Terminal bytes, current projection, Relay sockets, OpenSSH children, and Browser state stay bounded and owner-local.
-- Relay state stays on the accepting owner node. The current single-node profile has no remote-owner path; clustered Browser/API routing may later use at most one internal owner WSS hop, while Relay enrollment/tunnel is never proxied.
+- Relay state stays on the accepting owner node. Clustered Browser/API routing may use at most one internal owner WSS hop, while Relay enrollment/tunnel is never proxied.
 - SSH private-key encryption is one fixed local XChaCha20-Poly1305 path; do not add a provider abstraction, KMS/HSM framework, KDF, or encryption-key-management surface.
-- Release workflows publish CI-qualified commits and do not rerun CI.
+- Documentation and development-image workflows run only after successful `main` CI and consume the exact qualified revision. Tag-driven release trusts the pushed CI-qualified tag, checks repository/tag versions, embeds source revision metadata, and constructs archives, checksums, image tags, and release notes without repeating CI or source validation.
 
 See [AGENTS.md](https://github.com/owlfoundry/owlmux/blob/main/AGENTS.md) for the complete repository guide.

@@ -1,6 +1,13 @@
 use std::{env, ffi::OsString, fmt, net::SocketAddr, path::PathBuf, time::Duration};
 
-use crate::{auth::ApiKey, crypto::EncryptionKey};
+use uuid::Uuid;
+
+use crate::{
+    auth::ApiKey,
+    build,
+    cluster::{ClusterKey, ConfigurationInput},
+    crypto::EncryptionKey,
+};
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:8080";
 const DEFAULT_WEB_DIR: &str = "apps/web/dist";
@@ -10,6 +17,21 @@ const DEFAULT_SHUTDOWN_SECONDS: u64 = 10;
 const DEFAULT_LEASE_SECONDS: u64 = 30;
 const DEFAULT_LEASE_MARGIN_SECONDS: u64 = 5;
 const MAX_SHUTDOWN_SECONDS: u64 = 60;
+
+pub struct ClusterConfig {
+    key: ClusterKey,
+    address: SocketAddr,
+    advertised_url: String,
+    tls_certificate: PathBuf,
+    tls_private_key: PathBuf,
+    tls_ca: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeploymentProfile {
+    SingleNode,
+    Clustered,
+}
 
 pub struct Config {
     address: SocketAddr,
@@ -24,6 +46,8 @@ pub struct Config {
     lease_safety_margin: Duration,
     shutdown_timeout: Duration,
     node_name: Option<String>,
+    profile: DeploymentProfile,
+    cluster: Option<ClusterConfig>,
 }
 
 impl Config {
@@ -97,6 +121,12 @@ impl Config {
         }) {
             return Err(ConfigError::Invalid("OWLMUX_NODE_NAME"));
         }
+        let profile = match optional_utf8(&mut read, "OWLMUX_PROFILE")?.as_deref() {
+            None | Some("single-node") => DeploymentProfile::SingleNode,
+            Some("clustered") => DeploymentProfile::Clustered,
+            Some(_) => return Err(ConfigError::Invalid("OWLMUX_PROFILE")),
+        };
+        let cluster = load_cluster_config(&mut read, profile, &api_key, &encryption_key)?;
 
         Ok(Self {
             address,
@@ -111,6 +141,8 @@ impl Config {
             lease_safety_margin: Duration::from_secs(margin_seconds),
             shutdown_timeout: Duration::from_secs(shutdown_seconds),
             node_name,
+            profile,
+            cluster,
         })
     }
 
@@ -162,6 +194,121 @@ impl Config {
     pub fn node_name(&self) -> Option<&str> {
         self.node_name.as_deref()
     }
+    #[must_use]
+    pub const fn profile(&self) -> DeploymentProfile {
+        self.profile
+    }
+    #[must_use]
+    pub const fn cluster(&self) -> Option<&ClusterConfig> {
+        self.cluster.as_ref()
+    }
+
+    pub(crate) const fn profile_database_value(&self) -> &'static str {
+        match self.profile {
+            DeploymentProfile::SingleNode => "single_node",
+            DeploymentProfile::Clustered => "clustered",
+        }
+    }
+
+    pub(crate) fn configuration_proof(&self, deployment_id: Uuid) -> Option<[u8; 32]> {
+        self.cluster.as_ref().map(|cluster| {
+            cluster.key.configuration_proof(&ConfigurationInput {
+                deployment_id,
+                config_epoch: self.epoch,
+                server_build_id: build::BUILD_ID,
+                api_key_digest: self.api_key.configuration_digest(),
+                encryption_key_digest: self.encryption_key.configuration_digest(),
+                public_origin: &self.public_origin,
+            })
+        })
+    }
+}
+
+impl ClusterConfig {
+    #[must_use]
+    pub(crate) const fn key(&self) -> &ClusterKey {
+        &self.key
+    }
+    #[must_use]
+    pub const fn address(&self) -> SocketAddr {
+        self.address
+    }
+    #[must_use]
+    pub fn advertised_url(&self) -> &str {
+        &self.advertised_url
+    }
+    #[must_use]
+    pub fn tls_certificate(&self) -> &std::path::Path {
+        &self.tls_certificate
+    }
+    #[must_use]
+    pub fn tls_private_key(&self) -> &std::path::Path {
+        &self.tls_private_key
+    }
+    #[must_use]
+    pub fn tls_ca(&self) -> &std::path::Path {
+        &self.tls_ca
+    }
+}
+
+fn load_cluster_config(
+    read: &mut impl FnMut(&str) -> Option<OsString>,
+    profile: DeploymentProfile,
+    api_key: &ApiKey,
+    encryption_key: &EncryptionKey,
+) -> Result<Option<ClusterConfig>, ConfigError> {
+    let names = [
+        "OWLMUX_CLUSTER_KEY",
+        "OWLMUX_INTERNAL_ADDR",
+        "OWLMUX_INTERNAL_URL",
+        "OWLMUX_INTERNAL_TLS_CERT",
+        "OWLMUX_INTERNAL_TLS_KEY",
+        "OWLMUX_INTERNAL_TLS_CA",
+    ];
+    let values = names
+        .map(|name| optional_utf8(read, name).map(|value| (name, value)))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    if profile == DeploymentProfile::SingleNode {
+        if let Some((name, _)) = values.iter().find(|(_, value)| value.is_some()) {
+            return Err(ConfigError::Invalid(name));
+        }
+        return Ok(None);
+    }
+
+    let required = |index: usize| {
+        values[index]
+            .1
+            .clone()
+            .filter(|value| !value.is_empty())
+            .ok_or(ConfigError::Missing(values[index].0))
+    };
+    let key =
+        ClusterKey::parse(&required(0)?).map_err(|_| ConfigError::Invalid("OWLMUX_CLUSTER_KEY"))?;
+    if key.configuration_digest() == api_key.configuration_digest()
+        || key.configuration_digest() == encryption_key.configuration_digest()
+    {
+        return Err(ConfigError::Invalid("OWLMUX_CLUSTER_KEY"));
+    }
+    let address = required(1)?
+        .parse()
+        .map_err(|_| ConfigError::Invalid("OWLMUX_INTERNAL_ADDR"))?;
+    let advertised_url = required(2)?;
+    validate_internal_url(&advertised_url)?;
+    let tls_certificate = PathBuf::from(required(3)?);
+    let tls_private_key = PathBuf::from(required(4)?);
+    let tls_ca = PathBuf::from(required(5)?);
+    if !tls_certificate.is_absolute() || !tls_private_key.is_absolute() || !tls_ca.is_absolute() {
+        return Err(ConfigError::Invalid("OWLMUX_INTERNAL_TLS_CERT"));
+    }
+    Ok(Some(ClusterConfig {
+        key,
+        address,
+        advertised_url,
+        tls_certificate,
+        tls_private_key,
+        tls_ca,
+    }))
 }
 
 fn required_utf8(
@@ -190,6 +337,21 @@ fn parse_number<T: std::str::FromStr>(
     optional_utf8(read, key)?.map_or(Ok(default), |value| {
         value.parse().map_err(|_| ConfigError::Invalid(key))
     })
+}
+
+fn validate_internal_url(value: &str) -> Result<(), ConfigError> {
+    let url = url::Url::parse(value).map_err(|_| ConfigError::Invalid("OWLMUX_INTERNAL_URL"))?;
+    if url.scheme() != "wss"
+        || url.host_str().is_none()
+        || url.path() != "/internal/v1/owner"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(ConfigError::Invalid("OWLMUX_INTERNAL_URL"));
+    }
+    Ok(())
 }
 
 fn validate_origin(origin: &str) -> Result<(), ConfigError> {
@@ -291,5 +453,33 @@ mod tests {
             error,
             ConfigError::Invalid("OWLMUX_NODE_LEASE_SAFETY_MARGIN_SECONDS")
         );
+    }
+
+    #[test]
+    fn clustered_profile_requires_one_complete_tls_configuration() {
+        let cluster_key = URL_SAFE_NO_PAD.encode([11_u8; 32]);
+        let config = load(&[
+            ("OWLMUX_PROFILE", OsStr::new("clustered")),
+            ("OWLMUX_CLUSTER_KEY", OsStr::new(&cluster_key)),
+            ("OWLMUX_INTERNAL_ADDR", OsStr::new("127.0.0.1:9443")),
+            (
+                "OWLMUX_INTERNAL_URL",
+                OsStr::new("wss://node-a.example:9443/internal/v1/owner"),
+            ),
+            (
+                "OWLMUX_INTERNAL_TLS_CERT",
+                OsStr::new("/run/owlmux/tls.crt"),
+            ),
+            ("OWLMUX_INTERNAL_TLS_KEY", OsStr::new("/run/owlmux/tls.key")),
+            ("OWLMUX_INTERNAL_TLS_CA", OsStr::new("/run/owlmux/ca.crt")),
+        ])
+        .expect("cluster config");
+        assert_eq!(config.profile(), DeploymentProfile::Clustered);
+        assert!(config.cluster().is_some());
+
+        let error = load(&[("OWLMUX_CLUSTER_KEY", OsStr::new(&cluster_key))])
+            .err()
+            .expect("partial cluster config");
+        assert_eq!(error, ConfigError::Invalid("OWLMUX_CLUSTER_KEY"));
     }
 }

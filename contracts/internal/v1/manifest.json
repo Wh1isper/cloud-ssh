@@ -1,0 +1,17 @@
+{
+  "version": "owner.v1",
+  "schemas": ["owner.schema.json"],
+  "configuration_proof": "configuration-proof.json",
+  "auth_timeout_seconds": 5,
+  "dial_timeout_seconds": 5,
+  "write_timeout_seconds": 5,
+  "max_frame_bytes": 32768,
+  "max_connections": 128,
+  "max_control_connections": 8,
+  "close_codes": {
+    "normal": 1000,
+    "protocol_error": 1002,
+    "policy_violation": 1008,
+    "temporarily_unavailable": 1013
+  }
+}

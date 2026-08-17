@@ -1,74 +1,26 @@
 name: Docs
 
 on:
-  pull_request:
-    paths:
-      - "docs/**"
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - "scripts/check-markdown-links.py"
-      - ".github/workflows/docs.yml"
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - "docs/**"
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - "scripts/check-markdown-links.py"
-      - ".github/workflows/docs.yml"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  group: docs-main
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build docs
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-      - name: Install pnpm
-        run: npm install --global pnpm@11.20.0
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Check Markdown links
-        run: python3 scripts/check-markdown-links.py
-      - name: Build documentation
-        run: pnpm --filter @owlmux/docs build
-      - name: Verify deployment assets
-        run: |
-          test -f docs/.vitepress/dist/sitemap.xml
-          test -f docs/.vitepress/dist/robots.txt
-          grep -q 'https://owlmux-docs.owlfoundry.org/' docs/.vitepress/dist/sitemap.xml
-          grep -qx 'Sitemap: https://owlmux-docs.owlfoundry.org/sitemap.xml' docs/.vitepress/dist/robots.txt
-      - name: Dry-run documentation deployment
-        run: pnpm --filter @owlmux/docs run deploy --dry-run
-      - name: Upload documentation artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: owlmux-docs
-          path: docs/.vitepress/dist
-          if-no-files-found: error
-          retention-days: 7
-
   deploy:
-    name: Deploy docs
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: build
+    name: Build and deploy docs
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -77,9 +29,10 @@ jobs:
       contents: read
       deployments: write
     steps:
-      - name: Check out repository
+      - name: Check out qualified revision
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -87,13 +40,14 @@ jobs:
           node-version: "24"
       - name: Install pnpm
         run: npm install --global pnpm@11.20.0
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Download documentation artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: owlmux-docs
-          path: docs/.vitepress/dist
+      - name: Build documentation
+        env:
+          REVISION: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pnpm install --filter @owlmux/docs... --frozen-lockfile
+          pnpm --filter @owlmux/docs build
+          printf '%s\n' "$REVISION" > docs/.vitepress/dist/SOURCE_REVISION
+          grep -qx "$REVISION" docs/.vitepress/dist/SOURCE_REVISION
       - name: Check Cloudflare configuration
         id: cloudflare
         env:

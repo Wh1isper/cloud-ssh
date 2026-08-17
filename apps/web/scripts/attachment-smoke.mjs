@@ -5,7 +5,7 @@ const machineId = process.env.OWLMUX_E2E_MACHINE_ID;
 const apiKey = process.env.OWLMUX_E2E_API_KEY;
 if (!server || !machineId || !apiKey) throw new Error("missing attachment smoke configuration");
 
-const origin = server.replace(/^ws/, "http");
+const origin = process.env.OWLMUX_E2E_ORIGIN ?? server.replace(/^ws/, "http");
 const socket = new WebSocket(`${server}/attachment/v1/machines/${machineId}`, { origin });
 const deadline = setTimeout(() => fail("attachment smoke timed out"), 30_000);
 let pendingProjection = null;
@@ -36,6 +36,7 @@ socket.on("message", (bytes) => {
     socket.send(
       JSON.stringify({
         type: "session.select",
+        machine_connection_epoch: frame.machine_connection_epoch,
         selection_epoch: frame.selection_epoch,
         session_id: session.session_id,
         session_created: session.session_created,

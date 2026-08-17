@@ -37,6 +37,7 @@ socket.on("message", (bytes) => {
       socket.send(
         JSON.stringify({
           type: "session.select",
+          machine_connection_epoch: frame.machine_connection_epoch,
           selection_epoch: frame.selection_epoch,
           session_id: session.session_id,
           session_created: session.session_created,

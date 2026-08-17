@@ -113,7 +113,7 @@ async fn initialize_or_validate(pool: &PgPool, config: &Config) -> Result<Uuid, 
         .await
         .map_err(|_| StorageError::Unavailable)?;
     let existing = sqlx::query(
-        "SELECT id, config_epoch, server_build_id FROM deployment WHERE singleton = true FOR UPDATE",
+        "SELECT id, config_epoch, server_build_id, profile, config_proof FROM deployment WHERE singleton = true FOR UPDATE",
     )
     .fetch_optional(&mut *transaction)
     .await
@@ -127,9 +127,19 @@ async fn initialize_or_validate(pool: &PgPool, config: &Config) -> Result<Uuid, 
         let stored_build: String = row
             .try_get("server_build_id")
             .map_err(|_| StorageError::Invariant)?;
+        let stored_profile: String = row
+            .try_get("profile")
+            .map_err(|_| StorageError::Invariant)?;
+        let stored_proof: Option<Vec<u8>> = row
+            .try_get("config_proof")
+            .map_err(|_| StorageError::Invariant)?;
+        let expected_proof = config.configuration_proof(deployment_id).map(Vec::from);
         validate_credential_custody(&mut transaction, deployment_id, config).await?;
         if stored_epoch == config.config_epoch() {
-            if stored_build != build::BUILD_ID {
+            if stored_build != build::BUILD_ID
+                || stored_profile != config.profile_database_value()
+                || stored_proof != expected_proof
+            {
                 return Err(StorageError::ConfigurationMismatch);
             }
         } else if config.config_epoch() == stored_epoch + 1 {
@@ -143,10 +153,12 @@ async fn initialize_or_validate(pool: &PgPool, config: &Config) -> Result<Uuid, 
                 return Err(StorageError::ConfigurationTransitionBlocked);
             }
             sqlx::query(
-                "UPDATE deployment SET config_epoch = $1, server_build_id = $2 WHERE singleton = true",
+                "UPDATE deployment SET config_epoch = $1, server_build_id = $2, profile = $3, config_proof = $4 WHERE singleton = true",
             )
             .bind(config.config_epoch())
             .bind(build::BUILD_ID)
+            .bind(config.profile_database_value())
+            .bind(expected_proof)
             .execute(&mut *transaction)
             .await
             .map_err(|_| StorageError::Unavailable)?;
@@ -169,13 +181,16 @@ async fn initialize_or_validate(pool: &PgPool, config: &Config) -> Result<Uuid, 
         let generated =
             crypto::generate_credential(config.encryption_key(), deployment_id, credential_id)
                 .map_err(|_| StorageError::Custody)?;
+        let config_proof = config.configuration_proof(deployment_id).map(Vec::from);
         sqlx::query(
-            "INSERT INTO deployment (id, default_ssh_credential_id, config_epoch, server_build_id) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO deployment (id, default_ssh_credential_id, config_epoch, server_build_id, profile, config_proof) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(deployment_id)
         .bind(credential_id)
         .bind(config.config_epoch())
         .bind(build::BUILD_ID)
+        .bind(config.profile_database_value())
+        .bind(config_proof)
         .execute(&mut *transaction)
         .await
         .map_err(|error| classify_write(&error))?;
@@ -264,8 +279,75 @@ pub(crate) async fn append_audit(
     credential_id: Option<Uuid>,
     action: &str,
 ) -> Result<(), StorageError> {
+    append_audit_outcome(
+        transaction,
+        deployment_id,
+        resource_kind,
+        machine_id,
+        credential_id,
+        action,
+        "success",
+    )
+    .await
+}
+
+pub(crate) async fn append_audit_outcome(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    deployment_id: Uuid,
+    resource_kind: &str,
+    machine_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
+    action: &str,
+    outcome: &'static str,
+) -> Result<(), StorageError> {
+    insert_audit(
+        &mut **transaction,
+        deployment_id,
+        resource_kind,
+        machine_id,
+        credential_id,
+        action,
+        outcome,
+    )
+    .await
+}
+
+pub(crate) async fn record_audit(
+    pool: &sqlx::PgPool,
+    deployment_id: Uuid,
+    resource_kind: &str,
+    machine_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
+    action: &str,
+    outcome: &'static str,
+) -> Result<(), StorageError> {
+    insert_audit(
+        pool,
+        deployment_id,
+        resource_kind,
+        machine_id,
+        credential_id,
+        action,
+        outcome,
+    )
+    .await
+}
+
+async fn insert_audit<'e, E>(
+    executor: E,
+    deployment_id: Uuid,
+    resource_kind: &str,
+    machine_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
+    action: &str,
+    outcome: &'static str,
+) -> Result<(), StorageError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    debug_assert!(matches!(outcome, "success" | "rejected" | "ambiguous"));
     sqlx::query(
-        "INSERT INTO audit_events (id, deployment_id, resource_kind, machine_id, ssh_credential_id, action, outcome_class) VALUES ($1, $2, $3, $4, $5, $6, 'success')",
+        "INSERT INTO audit_events (id, deployment_id, resource_kind, machine_id, ssh_credential_id, action, outcome_class) VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(Uuid::new_v4())
     .bind(deployment_id)
@@ -273,7 +355,8 @@ pub(crate) async fn append_audit(
     .bind(machine_id)
     .bind(credential_id)
     .bind(action)
-    .execute(&mut **transaction)
+    .bind(outcome)
+    .execute(executor)
     .await
     .map_err(|error| classify_write(&error))?;
     Ok(())
@@ -387,6 +470,29 @@ mod container_tests {
         Config::load(|key| values.get(key).cloned()).expect("test config")
     }
 
+    async fn assert_critical_pool_remains_available(database: &Database) {
+        let mut ordinary_connections = Vec::with_capacity(8);
+        for _ in 0..8 {
+            ordinary_connections.push(
+                database
+                    .ordinary()
+                    .acquire()
+                    .await
+                    .expect("ordinary connection"),
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), database.ordinary().acquire())
+                .await
+                .is_err()
+        );
+        let critical_probe: i32 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(database.critical())
+            .await
+            .expect("critical probe while ordinary pool is full");
+        assert_eq!(critical_probe, 1);
+    }
+
     #[tokio::test]
     async fn container_postgres_bootstrap_is_idempotent_and_lease_is_fenced() {
         let Some(postgres) = postgres().await else {
@@ -411,6 +517,8 @@ mod container_tests {
             .expect("credential count");
         assert_eq!(deployment_count, 1);
         assert_eq!(credential_count, 1);
+
+        assert_critical_pool_remains_available(&database).await;
 
         let lease = NodeLease::register(database.clone(), &config)
             .await

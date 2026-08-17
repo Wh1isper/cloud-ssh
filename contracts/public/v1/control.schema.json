@@ -2,6 +2,19 @@
   "$id": "https://owlmux.dev/contracts/public/v1/control.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$defs": {
+    "AuditEventSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "action": { "maxLength": 64, "minLength": 1, "type": "string" },
+        "audit_event_id": { "format": "uuid", "type": "string" },
+        "machine_id": { "format": "uuid", "type": "string" },
+        "occurred_at": { "format": "date-time", "type": "string" },
+        "outcome_class": { "enum": ["success", "rejected", "ambiguous"] },
+        "resource_kind": { "enum": ["deployment", "ssh_credential", "machine", "enrollment", "relay_binding", "machine_owner", "server_node"] },
+        "ssh_credential_id": { "format": "uuid", "type": "string" }
+      },
+      "required": ["action", "audit_event_id", "occurred_at", "outcome_class", "resource_kind"], "type": "object"
+    },
     "CreateCredentialInput": {
       "additionalProperties": false,
       "properties": { "name": { "maxLength": 64, "minLength": 1, "type": "string" } },
@@ -38,7 +51,7 @@
         "config_epoch": { "minimum": 1, "type": "integer" },
         "default_ssh_credential_id": { "format": "uuid", "type": "string" },
         "deployment_id": { "format": "uuid", "type": "string" },
-        "profile": { "const": "single_node" },
+        "profile": { "enum": ["single_node", "clustered"] },
         "server_build_id": { "type": "string" }
       },
       "required": ["config_epoch", "default_ssh_credential_id", "deployment_id", "profile", "server_build_id"], "type": "object"
@@ -51,6 +64,11 @@
       },
       "required": ["enrollment_expires_in", "enrollment_token"], "type": "object"
     },
+    "MachineAliasInput": {
+      "additionalProperties": false,
+      "properties": { "alias": { "maxLength": 64, "minLength": 1, "type": "string" } },
+      "required": ["alias"], "type": "object"
+    },
     "MachineCreated": {
       "additionalProperties": false,
       "properties": {
@@ -60,22 +78,37 @@
       },
       "required": ["enrollment_expires_in", "enrollment_token", "machine"], "type": "object"
     },
+    "MachineCredentialInput": {
+      "additionalProperties": false,
+      "properties": { "ssh_credential_id": { "format": "uuid", "type": "string" } },
+      "required": ["ssh_credential_id"], "type": "object"
+    },
+    "MetricsSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "api_authenticated_requests_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "api_auth_rejections_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "api_mutation_overloads_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "node_ready": { "type": "boolean" },
+        "owner_absent_resolutions_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "owner_local_resolutions_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "owner_remote_resolutions_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" },
+        "owner_resolution_failures_total": { "maximum": 9007199254740991, "minimum": 0, "type": "integer" }
+      },
+      "required": ["api_authenticated_requests_total", "api_auth_rejections_total", "api_mutation_overloads_total", "node_ready", "owner_absent_resolutions_total", "owner_local_resolutions_total", "owner_remote_resolutions_total", "owner_resolution_failures_total"], "type": "object"
+    },
     "MachineSummary": {
       "additionalProperties": false,
       "properties": {
         "alias": { "type": "string" },
-        "host_identity": { "type": "string" },
         "lifecycle": { "enum": ["pending", "verifying", "active", "disabled"] },
         "machine_id": { "format": "uuid", "type": "string" },
         "reachability": { "enum": ["unknown", "connecting", "reachable", "temporarily_unavailable", "owner_unreachable"] },
-        "ssh_credential_id": { "format": "uuid", "type": "string" },
-        "target_account": { "type": "string" },
-        "tmux_path": { "type": "string" },
-        "tmux_socket_identity": { "type": "string" }
+        "ssh_credential_id": { "format": "uuid", "type": "string" }
       },
-      "required": ["alias", "host_identity", "lifecycle", "machine_id", "reachability", "ssh_credential_id", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+      "required": ["alias", "lifecycle", "machine_id", "reachability", "ssh_credential_id"], "type": "object"
     }
   },
-  "title": "OwlMux Block 1 control plane v1",
+  "title": "OwlMux control plane v1",
   "type": "object"
 }

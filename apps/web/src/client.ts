@@ -1,389 +1,164 @@
 import {
+  ATTACHMENT_CLOSE_NORMAL,
+  ATTACHMENT_CLOSE_PROTOCOL_ERROR,
   ATTACHMENT_MAX_FRAME_BYTES,
-  ATTACHMENT_MAX_PANES,
   ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES,
+  ATTACHMENT_MAX_PENDING_INPUT_BYTES,
+  ATTACHMENT_MAX_PENDING_OPERATIONS,
   ATTACHMENT_MAX_PROJECTION_BYTES,
-  ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES,
+  ATTACHMENT_MAX_SOCKET_BUFFER_BYTES,
 } from "./generated/contracts";
+import {
+  encodeBase64Url,
+  parseAttachmentFrame,
+  validateAttachmentInput,
+  type AttachmentFrame,
+} from "./attachment";
 import type {
+  AuditEventSummary,
   CreateCredentialInput,
   CreateMachineInput,
   CredentialSummary,
   DeploymentPresentation,
   EnrollmentTokenResponse,
+  ErrorCode,
+  ErrorResponse,
   MachineCreated,
   MachineSummary,
 } from "./generated/contracts";
 
 export class AuthenticationError extends Error {}
 
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: ErrorCode,
+    message: string,
+    readonly retryAfter?: number,
+  ) {
+    super(message);
+  }
+
+  get outcomeUnknown(): boolean {
+    return this.code === "operation_ambiguous";
+  }
+}
+
+const ERROR_CODES = new Set<ErrorCode>([
+  "not_implemented",
+  "unauthenticated",
+  "invalid_name",
+  "invalid_target_account",
+  "invalid_tmux_path",
+  "invalid_tmux_socket",
+  "invalid_host_identity",
+  "not_found",
+  "credential_in_use",
+  "credential_limit",
+  "machine_limit",
+  "invalid_lifecycle",
+  "conflict",
+  "temporarily_unavailable",
+  "owner_unreachable",
+  "operation_ambiguous",
+  "internal_error",
+]);
 const UTF8_ENCODER = new TextEncoder();
 
+function parseErrorResponse(value: unknown): ErrorResponse | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (
+    keys.some((key) => !["code", "message", "retry_after"].includes(key)) ||
+    typeof record.code !== "string" ||
+    !ERROR_CODES.has(record.code as ErrorCode) ||
+    typeof record.message !== "string" ||
+    record.message.length === 0 ||
+    record.message.length > 256 ||
+    (record.retry_after !== undefined &&
+      (!Number.isInteger(record.retry_after) ||
+        (record.retry_after as number) < 1 ||
+        (record.retry_after as number) > 30))
+  ) {
+    return null;
+  }
+  return {
+    code: record.code as ErrorCode,
+    message: record.message,
+    ...(record.retry_after === undefined ? {} : { retry_after: record.retry_after as number }),
+  };
+}
+
+export { parseAttachmentFrame } from "./attachment";
+export type {
+  AttachmentFrame,
+  AttachmentOperation,
+  AttachmentPane,
+  AttachmentSessionSummary,
+  AttachmentWindow,
+  AttachmentWindowSummary,
+} from "./attachment";
+
 export interface AttachmentSession {
+  claimWriter(
+    machineConnectionEpoch: string,
+    attachmentEpoch: string,
+    columns: number,
+    rows: number,
+  ): string;
+  createSession(machineConnectionEpoch: string, selectionEpoch: string, name: string): string;
   detach(): void;
   dispose(): void;
-  returnToChooser(): void;
-  selectSession(selectionEpoch: string, sessionId: string, sessionCreated: number): void;
-}
-
-export interface AttachmentSessionSummary {
-  session_id: string;
-  session_created: number;
-  name: string;
-  attached_client_count: number;
-  window_count: number;
-}
-
-export interface AttachmentWindow {
-  window_id: string;
-  name: string;
-  width: number;
-  height: number;
-  layout: string;
-}
-
-export interface AttachmentPane {
-  pane_id: string;
-  active: boolean;
-  width: number;
-  height: number;
-  left: number;
-  top: number;
-  title: string;
-  current_command: string;
-}
-
-export type AttachmentFrame =
-  | { type: "workspace.phase"; phase: "connecting" | "selecting" | "ready" | "failed" }
-  | {
-      type: "session.list";
-      selection_epoch: string;
-      tmux_client_version: string;
-      tmux_server_version: string | null;
-      sessions: Array<AttachmentSessionSummary>;
-    }
-  | {
-      type: "workspace.projection";
-      workspace_epoch: string;
-      session_id: string;
-      session_created: number;
-      window: AttachmentWindow;
-      panes: Array<AttachmentPane>;
-    }
-  | {
-      type: "workspace.pane_snapshot";
-      workspace_epoch: string;
-      pane_id: string;
-      chunk_index: number;
-      final: boolean;
-      data: Uint8Array;
-    }
-  | { type: "workspace.output"; workspace_epoch: string; pane_id: string; data: Uint8Array }
-  | { type: "workspace.error"; code: AttachmentErrorCode; message: string };
-
-type AttachmentErrorCode =
-  | "unauthenticated"
-  | "invalid_origin"
-  | "machine_unavailable"
-  | "stale_selection"
-  | "tmux_missing"
-  | "tmux_incompatible"
-  | "target_unavailable"
-  | "protocol_error";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean {
-  const actual = Object.keys(value).sort();
-  return (
-    actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index])
-  );
-}
-
-function isUuid(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  );
-}
-
-function isNumericId(value: unknown, prefix: "$" | "@" | "%"): value is string {
-  return (
-    typeof value === "string" && new RegExp(`^\\${prefix}[0-9]+$`).test(value) && value.length <= 32
-  );
-}
-
-function isBoundedInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function isSafeText(value: unknown, maximum: number): value is string {
-  return (
-    typeof value === "string" &&
-    UTF8_ENCODER.encode(value).length <= maximum &&
-    [...value].every((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code >= 32 && code !== 127;
-    })
-  );
-}
-
-function decodeBase64Url(value: unknown): Uint8Array {
-  if (
-    typeof value !== "string" ||
-    value.length > Math.ceil((ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES * 4) / 3) ||
-    !/^[A-Za-z0-9_-]*$/.test(value) ||
-    value.length % 4 === 1
-  ) {
-    throw new Error("invalid terminal bytes");
-  }
-  const standard = value.replaceAll("-", "+").replaceAll("_", "/");
-  const decoded = atob(standard + "=".repeat((4 - (standard.length % 4)) % 4));
-  const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-  if (bytes.length > ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES)
-    throw new Error("terminal bytes exceed limit");
-  const canonical = btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-  if (canonical !== value) throw new Error("terminal bytes are not canonical");
-  return bytes;
-}
-
-export function parseAttachmentFrame(input: unknown): AttachmentFrame {
-  if (!isRecord(input) || typeof input.type !== "string") throw new Error("invalid frame");
-  switch (input.type) {
-    case "workspace.phase":
-      if (
-        !hasKeys(input, ["phase", "type"]) ||
-        !["connecting", "selecting", "ready", "failed"].includes(String(input.phase))
-      )
-        throw new Error("invalid phase");
-      return input as AttachmentFrame;
-    case "session.list": {
-      if (
-        !hasKeys(input, [
-          "selection_epoch",
-          "sessions",
-          "tmux_client_version",
-          "tmux_server_version",
-          "type",
-        ]) ||
-        !isUuid(input.selection_epoch) ||
-        !isSafeText(input.tmux_client_version, 32) ||
-        !(input.tmux_server_version === null || isSafeText(input.tmux_server_version, 32)) ||
-        !Array.isArray(input.sessions) ||
-        input.sessions.length > 128
-      )
-        throw new Error("invalid session list");
-      const identities = new Set<string>();
-      const sessions = input.sessions.map((session) => {
-        if (
-          !isRecord(session) ||
-          !hasKeys(session, [
-            "attached_client_count",
-            "name",
-            "session_created",
-            "session_id",
-            "window_count",
-          ]) ||
-          !isNumericId(session.session_id, "$") ||
-          !isBoundedInteger(session.session_created, 1, Number.MAX_SAFE_INTEGER) ||
-          !isSafeText(session.name, 128) ||
-          !isBoundedInteger(session.attached_client_count, 0, 10_000) ||
-          !isBoundedInteger(session.window_count, 1, 10_000)
-        )
-          throw new Error("invalid session");
-        const identity = `${session.session_id}:${session.session_created}`;
-        if (identities.has(identity)) throw new Error("duplicate session");
-        identities.add(identity);
-        return {
-          session_id: session.session_id,
-          session_created: session.session_created,
-          name: session.name,
-          attached_client_count: session.attached_client_count,
-          window_count: session.window_count,
-        };
-      });
-      if (sessions.length > 0 && input.tmux_server_version === null)
-        throw new Error("missing tmux server version");
-      return {
-        type: "session.list",
-        selection_epoch: input.selection_epoch,
-        tmux_client_version: input.tmux_client_version,
-        tmux_server_version: input.tmux_server_version,
-        sessions,
-      };
-    }
-    case "workspace.projection": {
-      if (
-        !hasKeys(input, [
-          "panes",
-          "session_created",
-          "session_id",
-          "type",
-          "window",
-          "workspace_epoch",
-        ]) ||
-        !isUuid(input.workspace_epoch) ||
-        !isNumericId(input.session_id, "$") ||
-        !isBoundedInteger(input.session_created, 1, Number.MAX_SAFE_INTEGER) ||
-        !isRecord(input.window) ||
-        !hasKeys(input.window, ["height", "layout", "name", "width", "window_id"]) ||
-        !isNumericId(input.window.window_id, "@") ||
-        !isSafeText(input.window.name, 128) ||
-        !isBoundedInteger(input.window.width, 1, 10_000) ||
-        !isBoundedInteger(input.window.height, 1, 10_000) ||
-        !isSafeText(input.window.layout, 4096) ||
-        input.window.layout.length === 0 ||
-        !Array.isArray(input.panes) ||
-        input.panes.length === 0 ||
-        input.panes.length > ATTACHMENT_MAX_PANES
-      )
-        throw new Error("invalid projection");
-      const window = {
-        window_id: input.window.window_id,
-        name: input.window.name,
-        width: input.window.width,
-        height: input.window.height,
-        layout: input.window.layout,
-      };
-      const paneIds = new Set<string>();
-      let activePanes = 0;
-      const panes = input.panes.map((pane) => {
-        if (
-          !isRecord(pane) ||
-          !hasKeys(pane, [
-            "active",
-            "current_command",
-            "height",
-            "left",
-            "pane_id",
-            "title",
-            "top",
-            "width",
-          ]) ||
-          !isNumericId(pane.pane_id, "%") ||
-          typeof pane.active !== "boolean" ||
-          !isBoundedInteger(pane.width, 1, 10_000) ||
-          !isBoundedInteger(pane.height, 1, 10_000) ||
-          !isBoundedInteger(pane.left, 0, 9999) ||
-          !isBoundedInteger(pane.top, 0, 9999) ||
-          pane.left + pane.width > window.width ||
-          pane.top + pane.height > window.height ||
-          !isSafeText(pane.title, 256) ||
-          !isSafeText(pane.current_command, 256) ||
-          paneIds.has(pane.pane_id)
-        )
-          throw new Error("invalid pane");
-        paneIds.add(pane.pane_id);
-        if (pane.active) activePanes += 1;
-        return {
-          pane_id: pane.pane_id,
-          active: pane.active,
-          width: pane.width,
-          height: pane.height,
-          left: pane.left,
-          top: pane.top,
-          title: pane.title,
-          current_command: pane.current_command,
-        };
-      });
-      if (activePanes !== 1) throw new Error("invalid active pane cardinality");
-      return {
-        type: "workspace.projection",
-        workspace_epoch: input.workspace_epoch,
-        session_id: input.session_id,
-        session_created: input.session_created,
-        window,
-        panes,
-      };
-    }
-    case "workspace.pane_snapshot":
-      if (
-        !hasKeys(input, [
-          "chunk_index",
-          "data_base64",
-          "final",
-          "pane_id",
-          "type",
-          "workspace_epoch",
-        ]) ||
-        !isUuid(input.workspace_epoch) ||
-        !isNumericId(input.pane_id, "%") ||
-        !isBoundedInteger(
-          input.chunk_index,
-          0,
-          ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES / ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES - 1,
-        ) ||
-        typeof input.final !== "boolean"
-      )
-        throw new Error("invalid pane snapshot");
-      return {
-        type: "workspace.pane_snapshot",
-        workspace_epoch: input.workspace_epoch,
-        pane_id: input.pane_id,
-        chunk_index: input.chunk_index,
-        final: input.final,
-        data: decodeBase64Url(input.data_base64),
-      };
-    case "workspace.output":
-      if (
-        !hasKeys(input, ["data_base64", "pane_id", "type", "workspace_epoch"]) ||
-        !isUuid(input.workspace_epoch) ||
-        !isNumericId(input.pane_id, "%")
-      )
-        throw new Error("invalid output");
-      return {
-        type: "workspace.output",
-        workspace_epoch: input.workspace_epoch,
-        pane_id: input.pane_id,
-        data: decodeBase64Url(input.data_base64),
-      };
-    case "workspace.error": {
-      const codes: ReadonlyArray<AttachmentErrorCode> = [
-        "unauthenticated",
-        "invalid_origin",
-        "machine_unavailable",
-        "stale_selection",
-        "tmux_missing",
-        "tmux_incompatible",
-        "target_unavailable",
-        "protocol_error",
-      ];
-      if (
-        !hasKeys(input, ["code", "message", "type"]) ||
-        !codes.includes(input.code as AttachmentErrorCode) ||
-        !isSafeText(input.message, 256)
-      )
-        throw new Error("invalid error");
-      return {
-        type: "workspace.error",
-        code: input.code as AttachmentErrorCode,
-        message: input.message,
-      };
-    }
-    default:
-      throw new Error("unsupported frame");
-  }
+  refresh(machineConnectionEpoch: string, workspaceEpoch: string): string;
+  refreshSessions(machineConnectionEpoch: string, selectionEpoch: string): string;
+  resize(
+    machineConnectionEpoch: string,
+    workspaceEpoch: string,
+    columns: number,
+    rows: number,
+  ): string;
+  returnToChooser(machineConnectionEpoch: string, workspaceEpoch: string): void;
+  selectPane(machineConnectionEpoch: string, workspaceEpoch: string, paneId: string): string;
+  selectSession(
+    machineConnectionEpoch: string,
+    selectionEpoch: string,
+    sessionId: string,
+    sessionCreated: number,
+  ): void;
+  selectWindow(machineConnectionEpoch: string, workspaceEpoch: string, windowId: string): string;
+  sendPaneInput(
+    machineConnectionEpoch: string,
+    workspaceEpoch: string,
+    paneId: string,
+    data: Uint8Array,
+  ): string;
+  takeOverWriter(
+    machineConnectionEpoch: string,
+    attachmentEpoch: string,
+    columns: number,
+    rows: number,
+  ): string;
 }
 
 export interface ApiClient {
   cancelEnrollment(machineId: string): Promise<void>;
+  auditEvents(): Promise<Array<AuditEventSummary>>;
   createCredential(input: CreateCredentialInput): Promise<CredentialSummary>;
   createMachine(input: CreateMachineInput): Promise<MachineCreated>;
   deployment(): Promise<DeploymentPresentation>;
   disableMachine(machineId: string): Promise<void>;
   dispose(): void;
-  enableMachine(machineId: string): Promise<void>;
   issueEnrollment(machineId: string): Promise<EnrollmentTokenResponse>;
+  rebindMachine(machineId: string, credentialId: string): Promise<void>;
   reEnrollMachine(machineId: string): Promise<void>;
+  renameMachine(machineId: string, alias: string): Promise<void>;
+  revokeRelay(machineId: string): Promise<void>;
   openAttachment(
     machineId: string,
     onFrame: (frame: AttachmentFrame) => void,
     onClose: () => void,
+    onAuthenticationFailure: () => void,
   ): AttachmentSession;
   listCredentials(): Promise<Array<CredentialSummary>>;
   listMachines(): Promise<Array<MachineSummary>>;
@@ -409,6 +184,8 @@ export function createApiClient(candidate: string): ApiClient {
     }
     const controller = new AbortController();
     controllers.add(controller);
+    const method = (init.method ?? "GET").toUpperCase();
+    const mutating = method !== "GET" && method !== "HEAD";
     const headers = new Headers(init.headers);
     headers.delete("Authorization");
     headers.set("Authorization", `Bearer ${apiKey}`);
@@ -428,13 +205,33 @@ export function createApiClient(candidate: string): ApiClient {
         throw new AuthenticationError("Authentication failed");
       }
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? `Request failed (${response.status})`);
+        const value = (await response.json().catch(() => null)) as unknown;
+        const body = parseErrorResponse(value);
+        if (body !== null) {
+          throw new ApiError(response.status, body.code, body.message, body.retry_after);
+        }
+        if (mutating) {
+          throw new ApiError(
+            response.status,
+            "operation_ambiguous",
+            "The mutation response was incomplete; its durable outcome is unknown.",
+          );
+        }
+        throw new Error(`Request failed (${response.status})`);
       }
       if (response.status === 204) {
         return undefined as T;
       }
       return (await response.json()) as T;
+    } catch (error) {
+      if (error instanceof AuthenticationError || error instanceof ApiError || !mutating) {
+        throw error;
+      }
+      throw new ApiError(
+        0,
+        "operation_ambiguous",
+        "The mutation response was interrupted; its durable outcome is unknown.",
+      );
     } finally {
       controllers.delete(controller);
     }
@@ -446,7 +243,7 @@ export function createApiClient(candidate: string): ApiClient {
     apiKey = "";
     for (const controller of controllers) controller.abort();
     controllers.clear();
-    for (const socket of sockets) socket.close(1000, "logout");
+    for (const socket of sockets) socket.close(ATTACHMENT_CLOSE_NORMAL, "logout");
     sockets.clear();
   }
 
@@ -454,6 +251,7 @@ export function createApiClient(candidate: string): ApiClient {
     machineId: string,
     onFrame: (frame: AttachmentFrame) => void,
     onClose: () => void,
+    onAuthenticationFailure: () => void,
   ): AttachmentSession {
     if (disposed || apiKey.length === 0) throw new AuthenticationError("API client is disposed");
     const url = new URL(
@@ -472,8 +270,17 @@ export function createApiClient(candidate: string): ApiClient {
       paneBytes: Map<string, number>;
       totalBytes: number;
     } | null = null;
+    let currentConnectionEpoch: string | null = null;
+    let currentAttachmentEpoch: string | null = null;
     let currentWorkspaceEpoch: string | null = null;
     let currentPaneIds = new Set<string>();
+    const pendingOperations = new Map<string, number>();
+    let pendingInputBytes = 0;
+
+    const clearPendingOperations = () => {
+      pendingOperations.clear();
+      pendingInputBytes = 0;
+    };
 
     const validateSequence = (frame: AttachmentFrame): boolean => {
       if (frame.type === "workspace.phase") {
@@ -485,6 +292,7 @@ export function createApiClient(candidate: string): ApiClient {
           pendingProjection = null;
           currentWorkspaceEpoch = null;
           currentPaneIds = new Set();
+          clearPendingOperations();
         } else {
           if (
             pendingProjection === null ||
@@ -499,12 +307,24 @@ export function createApiClient(candidate: string): ApiClient {
       }
       if (frame.type === "session.list") {
         pendingProjection = null;
+        currentConnectionEpoch = frame.machine_connection_epoch;
+        currentAttachmentEpoch = frame.selection_epoch;
         currentWorkspaceEpoch = null;
         currentPaneIds = new Set();
+        clearPendingOperations();
         return true;
       }
+      if (frame.type === "writer.state") {
+        return (
+          frame.machine_connection_epoch === currentConnectionEpoch &&
+          frame.attachment_epoch === currentAttachmentEpoch
+        );
+      }
       if (frame.type === "workspace.projection") {
+        if (frame.machine_connection_epoch !== currentConnectionEpoch)
+          throw new Error("projection changed Machine connection epoch");
         const paneIds = new Set(frame.panes.map((pane) => pane.pane_id));
+        currentAttachmentEpoch = frame.workspace_epoch;
         pendingProjection = {
           workspaceEpoch: frame.workspace_epoch,
           paneIds,
@@ -547,10 +367,27 @@ export function createApiClient(candidate: string): ApiClient {
 
     const send = (frame: object) => {
       if (socket.readyState !== WebSocket.OPEN) throw new Error("Attachment is not open");
-      socket.send(JSON.stringify(frame));
+      const encoded = JSON.stringify(frame);
+      const encodedBytes = UTF8_ENCODER.encode(encoded).length;
+      if (encodedBytes > ATTACHMENT_MAX_FRAME_BYTES)
+        throw new Error("Attachment frame exceeds its bound");
+      if (socket.bufferedAmount + encodedBytes > ATTACHMENT_MAX_SOCKET_BUFFER_BYTES)
+        throw new Error("Attachment send buffer is full; input was not queued");
+      socket.send(encoded);
+    };
+    const request = (type: string, fields: object, inputBytes = 0): string => {
+      if (pendingOperations.size >= ATTACHMENT_MAX_PENDING_OPERATIONS)
+        throw new Error("Too many target operations are pending; input was not queued");
+      if (pendingInputBytes + inputBytes > ATTACHMENT_MAX_PENDING_INPUT_BYTES)
+        throw new Error("Too much pane input is pending; input was not queued");
+      const requestId = crypto.randomUUID();
+      send({ type, request_id: requestId, ...fields });
+      pendingOperations.set(requestId, inputBytes);
+      pendingInputBytes += inputBytes;
+      return requestId;
     };
     socket.addEventListener("open", () => {
-      if (disposed) socket.close(1000, "disposed");
+      if (disposed) socket.close(ATTACHMENT_CLOSE_NORMAL, "disposed");
       else send({ type: "auth.api_key", api_key: apiKey });
     });
     socket.addEventListener("message", (event) => {
@@ -558,17 +395,28 @@ export function createApiClient(candidate: string): ApiClient {
         typeof event.data !== "string" ||
         UTF8_ENCODER.encode(event.data).length > ATTACHMENT_MAX_FRAME_BYTES
       ) {
-        socket.close(1002, "invalid frame");
+        socket.close(ATTACHMENT_CLOSE_PROTOCOL_ERROR, "invalid frame");
         return;
       }
       try {
         const frame = parseAttachmentFrame(JSON.parse(event.data) as unknown);
+        if (frame.type === "workspace.error" && frame.code === "unauthenticated") {
+          dispose();
+          onAuthenticationFailure();
+          return;
+        }
+        if (frame.type === "operation.result") {
+          const inputBytes = pendingOperations.get(frame.request_id) ?? 0;
+          pendingOperations.delete(frame.request_id);
+          pendingInputBytes -= inputBytes;
+        }
         if (validateSequence(frame)) onFrame(frame);
       } catch {
-        socket.close(1002, "invalid frame");
+        socket.close(ATTACHMENT_CLOSE_PROTOCOL_ERROR, "invalid frame");
       }
     });
     const close = () => {
+      clearPendingOperations();
       sockets.delete(socket);
       if (!closed) {
         closed = true;
@@ -578,23 +426,92 @@ export function createApiClient(candidate: string): ApiClient {
     socket.addEventListener("close", close);
     socket.addEventListener("error", close);
     return {
+      claimWriter: (machineConnectionEpoch, attachmentEpoch, columns, rows) =>
+        request("writer.claim", {
+          machine_connection_epoch: machineConnectionEpoch,
+          attachment_epoch: attachmentEpoch,
+          columns,
+          rows,
+        }),
+      createSession: (machineConnectionEpoch, selectionEpoch, name) =>
+        request("session.create", {
+          machine_connection_epoch: machineConnectionEpoch,
+          selection_epoch: selectionEpoch,
+          name,
+        }),
       detach: () => send({ type: "workspace.detach" }),
       dispose: () => {
         sockets.delete(socket);
-        socket.close(1000, "disposed");
+        socket.close(ATTACHMENT_CLOSE_NORMAL, "disposed");
       },
-      returnToChooser: () => send({ type: "workspace.return_to_chooser" }),
-      selectSession: (selectionEpoch, sessionId, sessionCreated) =>
+      refresh: (machineConnectionEpoch, workspaceEpoch) =>
+        request("workspace.refresh", {
+          machine_connection_epoch: machineConnectionEpoch,
+          workspace_epoch: workspaceEpoch,
+        }),
+      refreshSessions: (machineConnectionEpoch, selectionEpoch) =>
+        request("session.refresh", {
+          machine_connection_epoch: machineConnectionEpoch,
+          selection_epoch: selectionEpoch,
+        }),
+      resize: (machineConnectionEpoch, workspaceEpoch, columns, rows) =>
+        request("client.resize", {
+          machine_connection_epoch: machineConnectionEpoch,
+          workspace_epoch: workspaceEpoch,
+          columns,
+          rows,
+        }),
+      returnToChooser: (machineConnectionEpoch, workspaceEpoch) =>
+        send({
+          type: "workspace.return_to_chooser",
+          machine_connection_epoch: machineConnectionEpoch,
+          workspace_epoch: workspaceEpoch,
+        }),
+      selectPane: (machineConnectionEpoch, workspaceEpoch, paneId) =>
+        request("pane.select", {
+          machine_connection_epoch: machineConnectionEpoch,
+          workspace_epoch: workspaceEpoch,
+          pane_id: paneId,
+        }),
+      selectSession: (machineConnectionEpoch, selectionEpoch, sessionId, sessionCreated) =>
         send({
           type: "session.select",
+          machine_connection_epoch: machineConnectionEpoch,
           selection_epoch: selectionEpoch,
           session_id: sessionId,
           session_created: sessionCreated,
+        }),
+      selectWindow: (machineConnectionEpoch, workspaceEpoch, windowId) =>
+        request("window.select", {
+          machine_connection_epoch: machineConnectionEpoch,
+          workspace_epoch: workspaceEpoch,
+          window_id: windowId,
+        }),
+      sendPaneInput: (machineConnectionEpoch, workspaceEpoch, paneId, data) => {
+        validateAttachmentInput(data);
+        return request(
+          "pane.input",
+          {
+            machine_connection_epoch: machineConnectionEpoch,
+            workspace_epoch: workspaceEpoch,
+            pane_id: paneId,
+            data_base64: encodeBase64Url(data),
+          },
+          data.length,
+        );
+      },
+      takeOverWriter: (machineConnectionEpoch, attachmentEpoch, columns, rows) =>
+        request("writer.takeover", {
+          machine_connection_epoch: machineConnectionEpoch,
+          attachment_epoch: attachmentEpoch,
+          columns,
+          rows,
         }),
     };
   }
 
   return {
+    auditEvents: () => request("/api/v1/audit-events"),
     cancelEnrollment: (machineId) =>
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/enrollment-token`, {
         method: "DELETE",
@@ -607,14 +524,26 @@ export function createApiClient(candidate: string): ApiClient {
     disableMachine: (machineId) =>
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/disable`, { method: "POST" }),
     dispose,
-    enableMachine: (machineId) =>
-      request(`/api/v1/machines/${encodeURIComponent(machineId)}/enable`, { method: "POST" }),
     issueEnrollment: (machineId) =>
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/enrollment-token`, {
         method: "POST",
       }),
+    rebindMachine: (machineId, credentialId) =>
+      request(`/api/v1/machines/${encodeURIComponent(machineId)}/ssh-credential`, {
+        method: "PATCH",
+        body: JSON.stringify({ ssh_credential_id: credentialId }),
+      }),
     reEnrollMachine: (machineId) =>
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/re-enroll`, {
+        method: "POST",
+      }),
+    renameMachine: (machineId, alias) =>
+      request(`/api/v1/machines/${encodeURIComponent(machineId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ alias }),
+      }),
+    revokeRelay: (machineId) =>
+      request(`/api/v1/machines/${encodeURIComponent(machineId)}/relay/revoke`, {
         method: "POST",
       }),
     openAttachment,

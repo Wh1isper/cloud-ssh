@@ -2,9 +2,9 @@
 
 OwlMux is a self-hosted terminal roaming gateway built on SSH and target-owned tmux. Target tmux owns every session, pane PTY, scrollback buffer, and child process. OwlMux provides a graphical Web client and an outbound Relay so users can reconnect without moving session ownership to public Server nodes.
 
-> **Current implementation:** Blocks 0–3 are implemented and Docker-qualified in the single-node profile: Deployment API-key access, generated encrypted SSH credentials, pending Machine management, one-use Relay enrollment, signed Relay tunnels, accepting-ingress ownership, constrained OpenSSH, an explicit tmux session chooser, and a target-authoritative read-only xterm.js projection of every visible pane in the selected session's target-current window through real tmux control mode. Writable terminal interaction and clustered internal owner-WSS routing remain target design, not current behavior.
+> **Current implementation:** The pre-release single-node and clustered product is implemented and Docker-qualified: Deployment API-key access, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, explicit active-Machine credential rebind, one-use Relay enrollment, signed Relay tunnels, accepting-ingress ownership, constrained OpenSSH, an explicit tmux session chooser, target-authoritative multi-pane xterm.js projection, the closed interactive writer surface, safe audit/metrics, and symmetric clustered routing. Browser attachments and Machine-affine invalidations may enter any coherent node and use at most one fresh challenge-authenticated internal TLS/WSS hop to the Relay-owning node. Node join, owner loss, stale endpoints, local TLS-identity/configuration rejection, exact-owner invalidation under cross-node Relay reconnect, lease-expiry recovery, cold API/configuration rotation, and target tmux survival have real acceptance evidence. Release qualification covers the documented Linux x86_64, tmux 3.2a/3.3a/3.5a/3.7b, `bash`/`dash`, single-node, clustered, Browser, dependency-audit, and production-image paths. Publication remains tag-driven and CI-owned; no production-supported version has been released, and no broader platform claim is implied.
 
-The following diagram shows the accepted target topology. The current profile runs one Server node and has no internal owner WSS.
+The following diagram shows the implemented single-node and clustered topology.
 
 ```mermaid
 flowchart LR
@@ -38,16 +38,16 @@ flowchart LR
 - Separate Deployments remain independent trust domains with separate origins, databases, secrets, membership, resources, and live state. OwlMux provides no cross-Deployment routing, migration, failover, or global view.
 - Relay forwards SSH bytes to enrolled loopback sshd and never owns tmux, a process, or target SSH authorization stores.
 - Browser, Server node, Relay, PostgreSQL, and network failure may interrupt an attachment but must not terminate target tmux.
-- Deployment initialization generates one default Ed25519 key pair. The current profile supports generation, rename, default selection/reset, replacement rotation, and retirement of an unreferenced non-default credential; active-Machine rebind remains target complete-lifecycle design. OwlMux accepts no private-key upload or alternate SSH key algorithm. Target administrators exclusively install and remove public keys through external operational tooling; OwlMux and Relay never mutate `authorized_keys` or equivalent authorization stores.
+- Deployment initialization generates one default Ed25519 key pair. The current profile supports generation, rename, default selection/reset, replacement rotation, active-Machine rebind for future SSH children, and retirement of an unreferenced non-default credential. OwlMux accepts no private-key upload or alternate SSH key algorithm. Target administrators exclusively install and remove public keys through external operational tooling; OwlMux and Relay never mutate `authorized_keys` or equivalent authorization stores.
 - The target administrator installs and operates tmux. The target design uses tmux 3.2a as its minimum, performs bounded runtime capability probes, maintains a small known-bad denylist, and uses representative CI evidence rather than a package allowlist or Cartesian profile manifest; OwlMux detects incompatibility but never installs, upgrades, downgrades, configures, patches, or repairs tmux.
 
 The normative design is under [`spec/`](spec/README.md).
 
 ## Repository layout
 
-- `crates/owlmux-server` — single-node Deployment, Relay ingress, constrained SSH/tmux, API, and attachment runtime;
+- `crates/owlmux-server` — symmetric Deployment, public/internal ingress, constrained SSH/tmux, API, and attachment runtime;
 - `crates/owlmux-relay` — target-side enrolled reverse-connection runtime;
-- `apps/web` — React control plane and read-only xterm.js workspace;
+- `apps/web` — React control plane and interactive xterm.js workspace;
 - `dev` — PostgreSQL plus opt-in loopback sshd/tmux target fixtures;
 - `docs` — VitePress documentation and Cloudflare Workers configuration;
 - `spec` — accepted target product and architecture specifications.
@@ -81,12 +81,16 @@ make dev-target-status
 make dev-down
 ```
 
-Run the isolated real PostgreSQL/Relay/OpenSSH/tmux acceptance path with versioned Node attachment-WebSocket clients and headless Chromium. It covers enrollment recovery, credential locking, two-pane projection and xterm rendering under the product CSP, a four-pane continuous-token snapshot/live cutover stress case, binary live output, projection refresh, route replacement, active re-enrollment, zero-session recovery, hard fencing, reload key clearing, and target tmux survival. The matrix command repeats the complete path with Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b:
+Run the isolated real PostgreSQL/Relay/OpenSSH/tmux acceptance path with versioned Node attachment-WebSocket clients and headless Chromium. It covers enrollment recovery, credential locking and active rebind, safe lifecycle presentation, audit/metrics, multi-pane projection and xterm rendering under the product CSP, continuous snapshot/live cutover, binary live output, concurrent writer claim, explicit session creation, literal input, observer geometry isolation, takeover without renderer rollback, target-observed writer/observer client flags, stale-writer rejection, authoritative resize, projection refresh, route replacement, active re-enrollment, zero-session recovery, hard fencing, reload key clearing, and target tmux survival. The matrix command repeats the complete path with Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b:
 
 ```bash
 make test-e2e
+make test-e2e-clustered
 make test-e2e-matrix
+make test-recovery
 ```
+
+`make test-e2e-clustered` additionally runs two coherent Server nodes with private-CA internal TLS and proves remote attachment and invalidation routing, unreachable-owner behavior, lease recovery after owner loss, no join/restart remap, exact configuration rejection, remote Relay revocation, disabled re-enrollment, enrollment cancellation, cold API/configuration rotation, and target tmux survival. `make test-recovery` runs the complete single-node and clustered failure/recovery evidence.
 
 Build and smoke-test the production image:
 
@@ -102,6 +106,7 @@ make docker-build
 - [Deployment access and credentials](docs/guide/authentication.md)
 - [Relay and roaming](docs/guide/relay.md)
 - [Security](docs/guide/security.md)
+- [Recovery and incident response](docs/guide/recovery.md)
 - [Specifications](spec/README.md)
 
 ## License

@@ -37,16 +37,28 @@ test-containers: ## Run Docker-backed PostgreSQL integration tests
 .PHONY: test-e2e
 test-e2e: web-build ## Run isolated Docker E2E for PostgreSQL, Relay, SSH, and target-owned tmux
 	@cargo build --locked --package owlmux-server --package owlmux-relay
-	@scripts/docker/e2e-blocks-0-3.sh
+	@python3 scripts/check-glibc-baseline.py target/debug/owlmux-relay 2.35
+	@scripts/docker/e2e-single-node.sh
 
 .PHONY: test-e2e-matrix
 test-e2e-matrix: web-build ## Run Docker E2E across distribution and current-upstream tmux
 	@cargo build --locked --package owlmux-server --package owlmux-relay
+	@python3 scripts/check-glibc-baseline.py target/debug/owlmux-relay 2.35
 	@scripts/docker/e2e-tmux-matrix.sh
+
+.PHONY: test-e2e-clustered
+test-e2e-clustered: web-build ## Run two-node owner-routing and recovery E2E
+	@cargo build --locked --package owlmux-server --package owlmux-relay
+	@python3 scripts/check-glibc-baseline.py target/debug/owlmux-relay 2.35
+	@scripts/docker/e2e-clustered-routing.sh
+
+.PHONY: test-recovery
+test-recovery: test-e2e test-e2e-clustered ## Run the repeatable failure, recovery, and cold-rotation exercises
 
 .PHONY: build
 build: web-build docs-build ## Build both release binaries and public assets
 	@cargo build --release --locked --package owlmux-server --package owlmux-relay
+	@python3 scripts/check-glibc-baseline.py target/release/owlmux-relay 2.35
 
 .PHONY: contracts-generate
 contracts-generate: ## Generate Rust and TypeScript bindings from reviewed contracts

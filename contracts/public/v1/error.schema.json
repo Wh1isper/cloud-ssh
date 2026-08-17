@@ -3,7 +3,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "code": { "enum": ["not_implemented", "unauthenticated", "invalid_name", "invalid_target_account", "invalid_tmux_path", "invalid_tmux_socket", "invalid_host_identity", "not_found", "credential_in_use", "invalid_lifecycle", "conflict", "temporarily_unavailable", "operation_ambiguous", "internal_error"] },
+    "code": { "enum": ["not_implemented", "unauthenticated", "invalid_name", "invalid_target_account", "invalid_tmux_path", "invalid_tmux_socket", "invalid_host_identity", "not_found", "credential_in_use", "credential_limit", "machine_limit", "invalid_lifecycle", "conflict", "temporarily_unavailable", "owner_unreachable", "operation_ambiguous", "internal_error"] },
     "message": { "maxLength": 256, "minLength": 1, "type": "string" },
     "retry_after": { "maximum": 30, "minimum": 1, "type": "integer" }
   },

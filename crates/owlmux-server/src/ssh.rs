@@ -28,6 +28,7 @@ use crate::{crypto, deployment::NodeLease, service::ServerState};
 
 const PROOF_MARKER: &[u8] = b"__OWLMUX_SSH_OK_V1__\n";
 const SESSION_MARKER: &[u8] = b"__OWLMUX_TMUX_SESSION_OK_V1__\n";
+const CREATE_MARKER: &str = "__OWLMUX_TMUX_CREATED_V1__\t";
 const SSH_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 const MAX_DIAGNOSTIC_READ: u64 = 4097;
@@ -399,6 +400,7 @@ pub struct ControlChild {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    pending_line: Vec<u8>,
     bridge: JoinHandle<io::Result<()>>,
     stderr: JoinHandle<()>,
     identity_path: Option<PathBuf>,
@@ -413,7 +415,12 @@ impl ControlChild {
     /// Returns a custody, transport, or framing error.
     pub async fn next_line(&mut self) -> Result<Vec<u8>, SshError> {
         self.lease.check().map_err(|_| SshError::Fenced)?;
-        let line = read_bounded_line(&mut self.stdout, MAX_CONTROL_LINE_BYTES).await?;
+        let line = read_bounded_line_into(
+            &mut self.stdout,
+            &mut self.pending_line,
+            MAX_CONTROL_LINE_BYTES,
+        )
+        .await?;
         if line.starts_with(b"%begin ")
             && let Some(identity_path) = self.identity_path.take()
         {
@@ -450,7 +457,17 @@ async fn read_bounded_line<R>(reader: &mut R, max_bytes: usize) -> Result<Vec<u8
 where
     R: AsyncBufRead + Unpin,
 {
-    let mut line = Vec::new();
+    read_bounded_line_into(reader, &mut Vec::new(), max_bytes).await
+}
+
+async fn read_bounded_line_into<R>(
+    reader: &mut R,
+    pending: &mut Vec<u8>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, SshError>
+where
+    R: AsyncBufRead + Unpin,
+{
     loop {
         let buffer = reader.fill_buf().await.map_err(|_| SshError::Unavailable)?;
         if buffer.is_empty() {
@@ -460,18 +477,18 @@ where
             .iter()
             .position(|byte| *byte == b'\n')
             .map_or(buffer.len(), |position| position + 1);
-        if line
+        if pending
             .len()
             .checked_add(take)
             .is_none_or(|size| size > max_bytes)
         {
             return Err(SshError::ProofFailed);
         }
-        let complete = take <= buffer.len() && buffer[take - 1] == b'\n';
-        line.extend_from_slice(&buffer[..take]);
+        let complete = buffer[take - 1] == b'\n';
+        pending.extend_from_slice(&buffer[..take]);
         reader.consume(take);
         if complete {
-            return Ok(line);
+            return Ok(std::mem::take(pending));
         }
     }
 }
@@ -549,7 +566,114 @@ pub async fn run_tmux_probe(
     result
 }
 
-/// Start one read-only tmux control-mode attachment for an observed session ID.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CreateSessionOutcome {
+    Succeeded,
+    Failed,
+    Ambiguous,
+}
+
+/// Create one target-owned tmux session through a fixed noninteractive entry operation.
+///
+/// # Errors
+///
+/// Returns before dispatch when the Machine, name, SSH custody, or route is invalid. Once the
+/// remote operation may have started, transport uncertainty is returned as `Ambiguous` and is
+/// never retried.
+pub async fn create_tmux_session(
+    state: &Arc<ServerState>,
+    machine_id: Uuid,
+    name: &str,
+    relay_stream: DuplexStream,
+) -> Result<CreateSessionOutcome, SshError> {
+    if name.is_empty()
+        || name.len() > 64
+        || name.trim() != name
+        || name.chars().any(char::is_control)
+    {
+        return Err(SshError::InvalidState);
+    }
+    let access = load_active_access(state, machine_id).await?;
+    let tmux = shell_literal(&access.tmux_path)?;
+    let socket = shell_literal(&access.tmux_socket_identity)?;
+    let name = shell_literal(name)?;
+    let remote_command = format!(
+        "created=$({tmux} -L {socket} new-session -d -P -F '#{{session_id}}:#{{session_created}}' -s {name}) || exit 46; printf '__OWLMUX_TMUX_CREATED_V1__\\t%s\\n' \"$created\""
+    );
+    let child_dir = state.ssh.child_dir()?;
+    let (mut child, bridge, identity_path) = spawn_access(
+        &state.lease,
+        child_dir.path(),
+        &access,
+        &remote_command,
+        relay_stream,
+    )
+    .await?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or(SshError::Unavailable)?
+        .take(MAX_DIAGNOSTIC_READ);
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or(SshError::Unavailable)?
+        .take(MAX_DIAGNOSTIC_READ);
+    let result = timeout(SSH_TIMEOUT, async {
+        let mut output = Vec::new();
+        let mut diagnostic = Vec::new();
+        let (stdout_result, stderr_result, status) = tokio::join!(
+            stdout.read_to_end(&mut output),
+            stderr.read_to_end(&mut diagnostic),
+            child.wait()
+        );
+        let Ok(status) = status else {
+            return CreateSessionOutcome::Ambiguous;
+        };
+        if stdout_result.is_err()
+            || stderr_result.is_err()
+            || output.len() > MAX_DIAGNOSTIC_BYTES
+            || diagnostic.len() > MAX_DIAGNOSTIC_BYTES
+        {
+            return CreateSessionOutcome::Ambiguous;
+        }
+        if !status.success() {
+            return if status.code() == Some(46) {
+                CreateSessionOutcome::Failed
+            } else {
+                CreateSessionOutcome::Ambiguous
+            };
+        }
+        let Ok(output) = std::str::from_utf8(&output) else {
+            return CreateSessionOutcome::Ambiguous;
+        };
+        let Some(identity) = output
+            .strip_prefix(CREATE_MARKER)
+            .and_then(|value| value.strip_suffix('\n'))
+        else {
+            return CreateSessionOutcome::Ambiguous;
+        };
+        let Some((session_id, created)) = identity.split_once(':') else {
+            return CreateSessionOutcome::Ambiguous;
+        };
+        let Ok(created) = created.parse::<i64>() else {
+            return CreateSessionOutcome::Ambiguous;
+        };
+        if !is_tmux_session_id(session_id) || created <= 0 {
+            return CreateSessionOutcome::Ambiguous;
+        }
+        if tokio::fs::remove_file(&identity_path).await.is_err() {
+            return CreateSessionOutcome::Ambiguous;
+        }
+        CreateSessionOutcome::Succeeded
+    })
+    .await
+    .unwrap_or(CreateSessionOutcome::Ambiguous);
+    bridge.abort();
+    Ok(result)
+}
+
+/// Start one tmux control-mode attachment for an observed session ID.
 ///
 /// # Errors
 ///
@@ -570,7 +694,7 @@ pub async fn start_tmux_control(
     let session = shell_literal(session_id)?;
     let expected_created = session_created.to_string();
     let remote_command = format!(
-        "actual=$({tmux} -L {socket} display-message -p -t {session} '#{{session_created}}') || exit 44; [ \"$actual\" = {expected_created} ] || exit 45; printf '__OWLMUX_TMUX_SESSION_OK_V1__\\n'; exec {tmux} -L {socket} -C attach-session -r -t {session}"
+        "actual=$({tmux} -L {socket} display-message -p -t {session} '#{{session_created}}') || exit 44; [ \"$actual\" = {expected_created} ] || exit 45; printf '__OWLMUX_TMUX_SESSION_OK_V1__\\n'; exec {tmux} -L {socket} -C attach-session -E -f 'read-only,ignore-size' -t {session}"
     );
     let child_dir = state.ssh.child_dir()?;
     let (mut child, bridge, identity_path) = spawn_access(
@@ -606,6 +730,7 @@ pub async fn start_tmux_control(
         child,
         stdin,
         stdout,
+        pending_line: Vec::new(),
         bridge,
         stderr: stderr_task,
         identity_path: Some(identity_path),
@@ -844,6 +969,39 @@ mod tests {
             read_bounded_line(&mut reader, 8).await,
             Err(SshError::ProofFailed)
         ));
+    }
+
+    #[tokio::test]
+    async fn partial_control_line_survives_a_cancelled_read() {
+        let (mut input, output) = tokio::io::duplex(64);
+        let mut reader = BufReader::new(output);
+        let mut pending = Vec::new();
+        input
+            .write_all(b"%layout-")
+            .await
+            .expect("write first fragment");
+
+        assert!(
+            timeout(
+                Duration::from_millis(10),
+                read_bounded_line_into(&mut reader, &mut pending, 64),
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(pending, b"%layout-");
+
+        input
+            .write_all(b"change @1 deadbeef\n")
+            .await
+            .expect("write second fragment");
+        assert_eq!(
+            read_bounded_line_into(&mut reader, &mut pending, 64)
+                .await
+                .expect("complete fragmented line"),
+            b"%layout-change @1 deadbeef\n"
+        );
+        assert!(pending.is_empty());
     }
 
     #[test]

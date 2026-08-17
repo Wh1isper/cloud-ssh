@@ -32,7 +32,6 @@ cleanup() {
     cat "$TMP/relay.log" >&2 2>/dev/null || true
     printf '\nAttachment refresh log:\n' >&2
     cat "$TMP/refresh.log" >&2 2>/dev/null || true
-    cat "$TMP/live-output.log" >&2 2>/dev/null || true
     cat "$TMP/route-replacement.log" >&2 2>/dev/null || true
   fi
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -75,11 +74,32 @@ curl --silent --show-error --max-time 2 -D "$TMP/protected.headers" -o /dev/null
   -H "Authorization: Bearer $API_KEY" http://127.0.0.1:18080/api/v1/deployment
 tr -d '\r' <"$TMP/protected.headers" | grep -qi '^cache-control: no-store$'
 tr -d '\r' <"$TMP/protected.headers" | grep -qi '^x-frame-options: DENY$'
-tr -d '\r' <"$TMP/protected.headers" | grep -qi '^permissions-policy:'
+tr -d '\r' <"$TMP/protected.headers" | grep -qi '^x-content-type-options: nosniff$'
+tr -d '\r' <"$TMP/protected.headers" | grep -qi '^referrer-policy: no-referrer$'
+tr -d '\r' <"$TMP/protected.headers" | grep -qi '^permissions-policy: camera=(), display-capture=(), geolocation=(), microphone=(), payment=(), usb=()$'
+tr -d '\r' <"$TMP/protected.headers" | grep -qi "^content-security-policy: default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; connect-src 'self'; style-src 'self' 'unsafe-inline'$"
 curl --silent --show-error --max-time 2 -D "$TMP/unauthenticated.headers" -o /dev/null \
   http://127.0.0.1:18080/api/v1/deployment
 tr -d '\r' <"$TMP/unauthenticated.headers" | grep -q '^HTTP/1.1 401'
 tr -d '\r' <"$TMP/unauthenticated.headers" | grep -qi '^cache-control: no-store$'
+python3 - <<'PY'
+import socket
+
+with socket.create_connection(("127.0.0.1", 18080), timeout=2) as connection:
+    connection.settimeout(7)
+    connection.sendall(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+    assert connection.recv(1) == b"", "incomplete HTTP headers were not closed by the read deadline"
+PY
+curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/health >/dev/null
+missing_content_type_status=$(curl --silent --show-error --max-time 5 -o /dev/null -w '%{http_code}' \
+  -X POST -H "Authorization: Bearer $API_KEY" --data '{"name":"invalid"}' \
+  http://127.0.0.1:18080/api/v1/ssh-credentials)
+[[ "$missing_content_type_status" == 415 ]]
+oversized_body=$(python3 -c 'print("x" * 17000)')
+oversized_status=$(curl --silent --show-error --max-time 5 -o /dev/null -w '%{http_code}' \
+  -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+  --data "$oversized_body" http://127.0.0.1:18080/api/v1/ssh-credentials)
+[[ "$oversized_status" == 413 ]]
 
 credentials=$(curl --fail --silent --show-error --max-time 5 \
   -H "Authorization: Bearer $API_KEY" \
@@ -185,22 +205,19 @@ OWLMUX_E2E_API_KEY="$API_KEY" \
 pnpm --filter @owlmux/web exec node scripts/attachment-cutover-smoke.mjs
 "${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux kill-session -t owlmux-cutover
 
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux new-session -d -s owlmux-live-output \
+  'block=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; stty -echo; while IFS= read -r line; do if [ "$line" = 0 ]; then printf "\033]2;owlmux-live-ready\007\377SYNC\n"; continue; fi; i=0; while [ "$i" -lt 64 ]; do printf "%s" "$block"; i=$((i + 1)); done; printf "\377LIVE-%s\n" "$line"; done'
+for _ in $(seq 1 100); do
+  live_command=$("${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux display-message -p -t owlmux-live-output:0.0 '#{pane_current_command}')
+  [[ $live_command != stty ]] && break
+  sleep 0.1
+done
+[[ $live_command != stty ]]
 OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
 OWLMUX_E2E_API_KEY="$API_KEY" \
-pnpm --filter @owlmux/web exec node scripts/attachment-live-output.mjs >"$TMP/live-output.log" 2>&1 &
-live_output_pid=$!
-for _ in $(seq 1 100); do
-  grep -q '^workspace-ready$' "$TMP/live-output.log" 2>/dev/null && break
-  sleep 0.1
-done
-grep -q '^workspace-ready$' "$TMP/live-output.log"
-"${COMPOSE[@]}" exec -T --user owlmux target sh -c \
-  "head -c 40000 /dev/zero | tr '\\000' x > /tmp/owlmux-live-output; printf '\\377LIVE-END' >> /tmp/owlmux-live-output"
-wait "$live_output_pid"
-cat "$TMP/live-output.log"
-"${COMPOSE[@]}" exec -T --user owlmux target sh -c "printf 'primary-ready' > /tmp/owlmux-live-output"
-sleep 2
+pnpm --filter @owlmux/web exec node scripts/attachment-live-output.mjs
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux kill-session -t owlmux-live-output
 
 OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
@@ -212,6 +229,8 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 grep -q '^workspace-ready$' "$TMP/route-replacement.log"
+old_route_epoch=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT connection_epoch FROM machine_owners WHERE machine_id = '$machine_id'")
 old_relay_pid=$RELAY_PID
 "${COMPOSE[@]}" exec -T target sh -c 'kill -TERM "$(cat /tmp/owlmux-relay.pid)"'
 wait "$old_relay_pid" 2>/dev/null || true
@@ -223,10 +242,24 @@ RELAY_PID=$!
 wait "$ROUTE_TEST_PID"
 ROUTE_TEST_PID=
 cat "$TMP/route-replacement.log"
+for _ in $(seq 1 100); do
+  machine=$(curl --fail --silent --show-error --max-time 2 \
+    -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:18080/api/v1/machines/$machine_id")
+  if python3 -c 'import json,sys; m=json.load(sys.stdin); raise SystemExit(0 if m["lifecycle"] == "active" and m["reachability"] == "reachable" else 1)' <<<"$machine"; then
+    break
+  fi
+  sleep 0.1
+done
+OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
+OWLMUX_E2E_MACHINE_ID="$machine_id" \
+OWLMUX_E2E_API_KEY="$API_KEY" \
+pnpm --filter @owlmux/web exec node scripts/attachment-smoke.mjs
+replacement_epoch=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT connection_epoch FROM machine_owners WHERE machine_id = '$machine_id'")
+(( replacement_epoch > old_route_epoch ))
 
 "${COMPOSE[@]}" exec -T target su - owlmux -c '/usr/bin/tmux -L owlmux has-session -t alpha'
-first_epoch=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
-  --command "SELECT connection_epoch FROM machine_owners WHERE machine_id = '$machine_id'")
+first_epoch=$replacement_epoch
 curl --fail --silent --show-error --max-time 5 -X POST \
   -H "Authorization: Bearer $API_KEY" \
   "http://127.0.0.1:18080/api/v1/machines/$machine_id/re-enroll" >/dev/null
@@ -268,9 +301,28 @@ OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
 OWLMUX_E2E_API_KEY="$API_KEY" \
 pnpm --filter @owlmux/web exec node scripts/attachment-smoke.mjs
+xss_machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"<img src=x onerror=globalThis.owlmuxXss=true>","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"xss-fixture","host_identity":sys.argv[1]}))' "$host_identity")
+curl --fail --silent --show-error --max-time 5 \
+  -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+  --data "$xss_machine_body" http://127.0.0.1:18080/api/v1/machines >/dev/null
 OWLMUX_E2E_HTTP_SERVER=http://127.0.0.1:18080 \
 OWLMUX_E2E_API_KEY="$API_KEY" \
 pnpm --filter @owlmux/web exec node scripts/browser-workspace-smoke.mjs
+OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
+OWLMUX_E2E_MACHINE_ID="$machine_id" \
+OWLMUX_E2E_API_KEY="$API_KEY" \
+pnpm --filter @owlmux/web exec node scripts/attachment-interactive.mjs
+"${COMPOSE[@]}" exec -T target test ! -e /tmp/owlmux-should-not-dispatch
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux kill-session -t owlmux-interactive
+for _ in $(seq 1 100); do
+  machine=$(curl --fail --silent --show-error --max-time 2 \
+    -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:18080/api/v1/machines/$machine_id")
+  if python3 -c 'import json,sys; m=json.load(sys.stdin); raise SystemExit(0 if m["lifecycle"] == "active" and m["reachability"] == "reachable" else 1)' <<<"$machine"; then
+    break
+  fi
+  sleep 0.1
+done
+python3 -c 'import json,sys; m=json.load(sys.stdin); assert m["lifecycle"] == "active" and m["reachability"] == "reachable"' <<<"$machine"
 
 OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
@@ -282,6 +334,43 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 grep -q '^workspace-ready$' "$TMP/refresh.log"
+replacement_credential=$(curl --fail --silent --show-error --max-time 5 \
+  -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+  --data '{"name":"Replacement"}' http://127.0.0.1:18080/api/v1/ssh-credentials)
+replacement_credential_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ssh_credential_id"])' <<<"$replacement_credential")
+replacement_public_key=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["public_key"])' <<<"$replacement_credential")
+printf '%s\n%s\n' "$public_key" "$replacement_public_key" | "${COMPOSE[@]}" exec -T target sh -c \
+  'cat > /home/owlmux/.ssh/authorized_keys && chown owlmux:owlmux /home/owlmux/.ssh/authorized_keys && chmod 0600 /home/owlmux/.ssh/authorized_keys'
+route_before_rebind=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT route_revision FROM machines WHERE id = '$machine_id'")
+credential_revision_before=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT credential_revision FROM machines WHERE id = '$machine_id'")
+curl --fail --silent --show-error --max-time 5 -X PATCH \
+  -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+  --data '{"alias":"renamed-target"}' \
+  "http://127.0.0.1:18080/api/v1/machines/$machine_id" >/dev/null
+rebind_body=$(python3 -c 'import json,sys; print(json.dumps({"ssh_credential_id":sys.argv[1]}))' "$replacement_credential_id")
+curl --fail --silent --show-error --max-time 5 -X PATCH \
+  -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+  --data "$rebind_body" \
+  "http://127.0.0.1:18080/api/v1/machines/$machine_id/ssh-credential" >/dev/null
+printf '%s\n' "$replacement_public_key" | "${COMPOSE[@]}" exec -T target sh -c \
+  'cat > /home/owlmux/.ssh/authorized_keys && chown owlmux:owlmux /home/owlmux/.ssh/authorized_keys && chmod 0600 /home/owlmux/.ssh/authorized_keys'
+machine=$(curl --fail --silent --show-error --max-time 5 \
+  -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:18080/api/v1/machines/$machine_id")
+python3 -c 'import json,sys; m=json.load(sys.stdin); assert set(m) == {"machine_id","ssh_credential_id","alias","lifecycle","reachability"}; assert m["alias"] == "renamed-target" and m["ssh_credential_id"] == sys.argv[1] and m["lifecycle"] == "active"' "$replacement_credential_id" <<<"$machine"
+route_after_rebind=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT route_revision FROM machines WHERE id = '$machine_id'")
+credential_revision_after=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
+  --command "SELECT credential_revision FROM machines WHERE id = '$machine_id'")
+[[ "$route_after_rebind" == "$route_before_rebind" ]]
+(( credential_revision_after == credential_revision_before + 1 ))
+audit_events=$(curl --fail --silent --show-error --max-time 5 \
+  -H "Authorization: Bearer $API_KEY" http://127.0.0.1:18080/api/v1/audit-events)
+python3 -c 'import json,sys; events=json.load(sys.stdin); actions={event["action"] for event in events}; expected={"rename","rebind","attachment_start","attachment_end","ssh_tmux_probe","ssh_tmux_control","writer_takeover","tmux_session_create"}; assert expected <= actions, sorted(expected-actions); assert all(set(event) <= {"audit_event_id","resource_kind","machine_id","ssh_credential_id","action","outcome_class","occurred_at"} for event in events)' <<<"$audit_events"
+metrics=$(curl --fail --silent --show-error --max-time 5 \
+  -H "Authorization: Bearer $API_KEY" http://127.0.0.1:18080/api/v1/metrics)
+python3 -c 'import json,sys; metrics=json.load(sys.stdin); assert metrics["node_ready"] is True and metrics["api_authenticated_requests_total"] > 0; assert all(isinstance(value, (bool,int)) for value in metrics.values())' <<<"$metrics"
 "${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux split-window -d -t alpha:0 \
   "printf 'tertiary-ready'; while :; do sleep 3600; done"
 for _ in $(seq 1 100); do
@@ -314,6 +403,14 @@ for _ in $(seq 1 100); do
 done
 grep -q '^workspace-ready$' "$TMP/fence.log"
 "${COMPOSE[@]}" stop postgres >/dev/null
+ready_status=200
+for _ in $(seq 1 100); do
+  ready_status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 1 \
+    http://127.0.0.1:18080/ready || true)
+  [[ "$ready_status" == 503 ]] && break
+  sleep 0.2
+done
+[[ "$ready_status" == 503 ]]
 wait "$FENCE_TEST_PID"
 FENCE_TEST_PID=
 cat "$TMP/fence.log"
@@ -324,4 +421,4 @@ SERVER_PID=
 wait "$RELAY_PID" 2>/dev/null || true
 RELAY_PID=
 "${COMPOSE[@]}" exec -T target su - owlmux -c '/usr/bin/tmux -L owlmux has-session -t alpha'
-printf 'Blocks 0-3 Docker E2E passed: enrollment recovery, owner claim, credential locking, Chromium/xterm projection, continuous snapshot/live cutover, binary live output, projection refresh, route replacement, hard fencing, and target tmux survival.\n'
+printf 'Single-node Docker E2E passed: enrollment recovery, owner claim, credential locking/rebind, safe presentation/audit/metrics, HTTP header/body/readiness bounds, Browser headers/XSS/navigation/logout/unknown-outcome refresh, Chromium/xterm projection, continuous snapshot/live cutover, binary live output, one writer, session creation, literal input, takeover, authoritative resize, projection refresh, route replacement, hard fencing, and target tmux survival.\n'

@@ -13,9 +13,12 @@ pub const ERROR_CODES: &[&str] = &[
     "invalid_host_identity",
     "not_found",
     "credential_in_use",
+    "credential_limit",
+    "machine_limit",
     "invalid_lifecycle",
     "conflict",
     "temporarily_unavailable",
+    "owner_unreachable",
     "operation_ambiguous",
     "internal_error",
 ];
@@ -26,6 +29,26 @@ pub const RELAY_MAX_STREAMS: usize = 32;
 pub const ATTACHMENT_CONTRACT_VERSION: &str = "attachment.v1";
 pub const ATTACHMENT_MAX_FRAME_BYTES: usize = 32_768;
 pub const ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES: usize = 16_384;
+pub const ATTACHMENT_MAX_INPUT_BYTES: usize = 1_024;
+pub const ATTACHMENT_MAX_DIMENSION: u32 = 10_000;
+pub const ATTACHMENT_MAX_GRID_CELLS: u64 = 2_000_000;
 pub const ATTACHMENT_MAX_PANES: usize = 32;
 pub const ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES: usize = 262_144;
 pub const ATTACHMENT_MAX_PROJECTION_BYTES: usize = 1_048_576;
+pub const ATTACHMENT_CLOSE_NORMAL: u16 = 1000;
+pub const ATTACHMENT_CLOSE_PROTOCOL_ERROR: u16 = 1002;
+pub const ATTACHMENT_CLOSE_POLICY_VIOLATION: u16 = 1008;
+pub const ATTACHMENT_CLOSE_TEMPORARILY_UNAVAILABLE: u16 = 1013;
+pub const INTERNAL_CONTRACT_VERSION: &str = "owner.v1";
+pub const INTERNAL_CONFIGURATION_VERSION: &str = "configuration.v1";
+pub const INTERNAL_CONFIGURATION_DOMAIN: &str = "owlmux:cluster-configuration:v1\0";
+pub const INTERNAL_AUTH_TIMEOUT_SECONDS: u64 = 5;
+pub const INTERNAL_DIAL_TIMEOUT_SECONDS: u64 = 5;
+pub const INTERNAL_WRITE_TIMEOUT_SECONDS: u64 = 5;
+pub const INTERNAL_MAX_FRAME_BYTES: usize = 32_768;
+pub const INTERNAL_MAX_CONNECTIONS: usize = 128;
+pub const INTERNAL_MAX_CONTROL_CONNECTIONS: usize = 8;
+pub const INTERNAL_CLOSE_NORMAL: u16 = 1000;
+pub const INTERNAL_CLOSE_PROTOCOL_ERROR: u16 = 1002;
+pub const INTERNAL_CLOSE_POLICY_VIOLATION: u16 = 1008;
+pub const INTERNAL_CLOSE_TEMPORARILY_UNAVAILABLE: u16 = 1013;

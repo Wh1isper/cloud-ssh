@@ -307,6 +307,7 @@ h1 {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -327,6 +328,7 @@ button:hover {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   padding: 11px 12px;
@@ -408,6 +410,10 @@ label {
   background: #f7dddd;
 }
 
+.error-banner p {
+  margin: 0 0 12px;
+}
+
 .token-card {
   display: grid;
   gap: 14px;
@@ -427,9 +433,12 @@ label {
 
 .control-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-inline-size: 0;
+  margin: 24px 0 0;
+  padding: 0;
   gap: 22px;
-  margin-top: 24px;
+  border: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .panel {
@@ -534,8 +543,30 @@ label {
   font-size: 13px;
 }
 
+.target-window-header > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
 .target-window-header span {
   color: #9ca3af;
+}
+
+.resize-form {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  padding: 0 4px 14px;
+}
+
+.resize-form label {
+  width: 120px;
+  color: #d1d5db;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .pane-layout {
@@ -575,9 +606,15 @@ label {
   background: rgb(3 7 18 / 84%);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 10px;
-  pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tmux-pane-header button {
+  min-height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
 }
 
 .tmux-pane-terminal,

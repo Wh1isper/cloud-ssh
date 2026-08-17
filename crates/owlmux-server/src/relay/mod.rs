@@ -1,7 +1,8 @@
 pub mod protocol;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
+    future::Future,
     net::SocketAddr,
     sync::Arc,
     time::Duration,
@@ -30,13 +31,14 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::{
     build,
     deployment::NodeLease,
     service::{ServerState, SourcePermit},
     ssh,
-    storage::append_audit,
+    storage::{append_audit, record_audit},
 };
 use protocol::{
     ChallengePurpose, ClientFrame, CloseReason, MAX_DATA_BYTES, MAX_FRAME_BYTES, MAX_STREAMS,
@@ -121,11 +123,58 @@ async fn tunnel_upgrade(
         })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerExitState {
+    Transitioning(RouteIdentity),
+    Releasing(RouteIdentity),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerReleaseDecision {
+    Defer,
+    Release,
+}
+
 #[derive(Default)]
 struct RegistryState {
     tunnels: HashMap<Uuid, Arc<TunnelHandle>>,
     pending_claims: HashMap<(Uuid, Uuid), CancellationToken>,
-    transitioning: HashSet<Uuid>,
+    owner_exits: HashMap<Uuid, OwnerExitState>,
+}
+
+impl RegistryState {
+    fn begin_transition(&mut self, machine_id: Uuid, route: RouteIdentity) -> bool {
+        if self.owner_exits.contains_key(&machine_id) {
+            return false;
+        }
+        self.owner_exits
+            .insert(machine_id, OwnerExitState::Transitioning(route));
+        true
+    }
+
+    fn begin_owner_release(
+        &mut self,
+        machine_id: Uuid,
+        route: RouteIdentity,
+    ) -> Option<OwnerReleaseDecision> {
+        match self.owner_exits.get(&machine_id) {
+            Some(OwnerExitState::Transitioning(expected)) if *expected == route => {
+                Some(OwnerReleaseDecision::Defer)
+            }
+            Some(_) => None,
+            None => {
+                self.owner_exits
+                    .insert(machine_id, OwnerExitState::Releasing(route));
+                Some(OwnerReleaseDecision::Release)
+            }
+        }
+    }
+
+    fn finish_owner_release(&mut self, machine_id: Uuid, route: RouteIdentity) {
+        if self.owner_exits.get(&machine_id) == Some(&OwnerExitState::Releasing(route)) {
+            self.owner_exits.remove(&machine_id);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -137,15 +186,34 @@ pub struct RelayRegistry {
 pub(crate) struct MachineTransition {
     registry: RelayRegistry,
     machine_id: Uuid,
+    route: RouteIdentity,
     armed: bool,
 }
 
 impl MachineTransition {
-    pub(crate) async fn finish(mut self) {
+    pub(crate) async fn finish(
+        mut self,
+        state: &Arc<ServerState>,
+        committed: bool,
+    ) -> RelayResult<()> {
+        if !committed
+            && release_owner(
+                state,
+                self.machine_id,
+                self.route.connection_id,
+                self.route.connection_epoch,
+            )
+            .await
+            .is_err()
+        {
+            self.armed = false;
+            return Err(RelayError::Fenced);
+        }
         self.registry
-            .finish_machine_transition(self.machine_id)
+            .finish_machine_transition(self.machine_id, self.route)
             .await;
         self.armed = false;
+        Ok(())
     }
 
     pub(crate) fn hard_fence(mut self) {
@@ -207,18 +275,22 @@ impl RelayRegistry {
     pub(crate) async fn begin_machine_transition(
         &self,
         machine_id: Uuid,
+        expected_route: RouteIdentity,
     ) -> Option<MachineTransition> {
         let (transition, handle, pending_claims) = {
             let mut state = self.state.write().await;
-            if !state.transitioning.insert(machine_id) {
+            let handle = state.tunnels.get(&machine_id)?.clone();
+            if handle.route != expected_route || !state.begin_transition(machine_id, expected_route)
+            {
                 return None;
             }
             let transition = MachineTransition {
                 registry: self.clone(),
                 machine_id,
+                route: expected_route,
                 armed: true,
             };
-            let handle = state.tunnels.remove(&machine_id);
+            state.tunnels.remove(&machine_id);
             let pending_claims = state
                 .pending_claims
                 .iter()
@@ -228,10 +300,8 @@ impl RelayRegistry {
             (transition, handle, pending_claims)
         };
         let cleanup = async {
-            if let Some(handle) = handle {
-                handle.close_dispatch().await;
-                handle.cleanup_complete.cancelled().await;
-            }
+            handle.close_dispatch().await;
+            handle.cleanup_complete.cancelled().await;
             for completion in pending_claims {
                 completion.cancelled().await;
             }
@@ -243,16 +313,47 @@ impl RelayRegistry {
         Some(transition)
     }
 
-    async fn finish_machine_transition(&self, machine_id: Uuid) {
+    async fn finish_machine_transition(&self, machine_id: Uuid, route: RouteIdentity) {
         let handle = {
             let mut state = self.state.write().await;
             let handle = state.tunnels.remove(&machine_id);
-            state.transitioning.remove(&machine_id);
+            if state.owner_exits.get(&machine_id) == Some(&OwnerExitState::Transitioning(route)) {
+                state.owner_exits.remove(&machine_id);
+            }
             handle
         };
         if let Some(handle) = handle {
             handle.close_dispatch().await;
         }
+    }
+
+    async fn begin_owner_release(
+        &self,
+        machine_id: Uuid,
+        route: RouteIdentity,
+    ) -> RelayResult<OwnerReleaseDecision> {
+        self.state
+            .write()
+            .await
+            .begin_owner_release(machine_id, route)
+            .ok_or(RelayError::Fenced)
+    }
+
+    async fn finish_owner_release(
+        &self,
+        machine_id: Uuid,
+        connection_id: Uuid,
+        route: RouteIdentity,
+    ) {
+        let mut state = self.state.write().await;
+        if state
+            .tunnels
+            .get(&machine_id)
+            .is_some_and(|handle| handle.route == route && route.connection_id == connection_id)
+        {
+            state.tunnels.remove(&machine_id);
+        }
+        state.finish_owner_release(machine_id, route);
     }
 
     pub async fn is_connected(&self, machine_id: Uuid) -> bool {
@@ -264,6 +365,31 @@ impl RelayRegistry {
             .is_some_and(|handle| !handle.barrier.is_cancelled())
     }
 
+    pub(crate) async fn route_fence(
+        &self,
+        machine_id: Uuid,
+        route: RouteIdentity,
+    ) -> Option<RouteFence> {
+        self.lease.check().ok()?;
+        let state = self.state.read().await;
+        let handle = state.tunnels.get(&machine_id)?;
+        if handle.route != route || handle.barrier.is_cancelled() {
+            return None;
+        }
+        Some(handle.route_fence())
+    }
+
+    pub async fn is_current_route(&self, machine_id: Uuid, route: RouteIdentity) -> bool {
+        self.lease.is_ready()
+            && self
+                .state
+                .read()
+                .await
+                .tunnels
+                .get(&machine_id)
+                .is_some_and(|handle| handle.route == route && !handle.barrier.is_cancelled())
+    }
+
     async fn reserve_claim(&self, machine_id: Uuid, connection_id: Uuid) -> RelayResult<()> {
         if !self.lease.is_ready() {
             return Err(RelayError::Fenced);
@@ -273,7 +399,7 @@ impl RelayRegistry {
             return Err(RelayError::Fenced);
         }
         let identity = (machine_id, connection_id);
-        if state.transitioning.contains(&machine_id)
+        if state.owner_exits.contains_key(&machine_id)
             || state.tunnels.contains_key(&machine_id)
             || state.pending_claims.contains_key(&identity)
         {
@@ -299,7 +425,7 @@ impl RelayRegistry {
             return Err(RelayError::Fenced);
         }
         let identity = (machine_id, connection_id);
-        if state.transitioning.contains(&machine_id)
+        if state.owner_exits.contains_key(&machine_id)
             || state.tunnels.contains_key(&machine_id)
             || !state.pending_claims.contains_key(&identity)
         {
@@ -323,17 +449,6 @@ impl RelayRegistry {
             completion.cancel();
         }
     }
-
-    async fn remove(&self, machine_id: Uuid, connection_id: Uuid) {
-        let mut state = self.state.write().await;
-        if state
-            .tunnels
-            .get(&machine_id)
-            .is_some_and(|handle| handle.route.connection_id == connection_id)
-        {
-            state.tunnels.remove(&machine_id);
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -341,6 +456,24 @@ pub struct RouteIdentity {
     pub route_revision: i64,
     pub connection_epoch: i64,
     pub connection_id: Uuid,
+}
+
+#[derive(Clone)]
+pub(crate) struct RouteFence {
+    dispatch_open: Arc<Mutex<bool>>,
+    barrier: CancellationToken,
+    lease: Arc<NodeLease>,
+}
+
+impl RouteFence {
+    pub(crate) async fn dispatch<T>(&self, work: impl Future<Output = T>) -> RelayResult<T> {
+        let dispatch_open = self.dispatch_open.lock().await;
+        self.lease.check().map_err(|_| RelayError::Fenced)?;
+        if !*dispatch_open || self.barrier.is_cancelled() {
+            return Err(RelayError::Unavailable);
+        }
+        Ok(work.await)
+    }
 }
 
 pub struct RelayStream {
@@ -376,8 +509,17 @@ impl TunnelHandle {
     }
 
     async fn close_dispatch(&self) {
+        let mut dispatch_open = self.dispatch_open.lock().await;
+        *dispatch_open = false;
         self.barrier.cancel();
-        *self.dispatch_open.lock().await = false;
+    }
+
+    fn route_fence(&self) -> RouteFence {
+        RouteFence {
+            dispatch_open: Arc::clone(&self.dispatch_open),
+            barrier: self.barrier.clone(),
+            lease: Arc::clone(&self.lease),
+        }
     }
 
     async fn open_stream(&self) -> RelayResult<RelayStream> {
@@ -442,6 +584,7 @@ async fn enrollment(
     else {
         return send_error(&mut socket, RelayError::Protocol).await;
     };
+    let token = Zeroizing::new(token);
     let accepted = accept_token(&state, &token).await?;
     drop(source_permit);
     drop(attempt_permit);
@@ -533,6 +676,19 @@ async fn continue_enrollment(
         &mut socket,
         transport_stream,
         ssh::verify_access(state, accepted.machine_id, ssh_stream),
+    )
+    .await;
+    let _ = timeout(
+        Duration::from_secs(1),
+        record_audit(
+            state.database.ordinary(),
+            state.database.deployment_id(),
+            "machine",
+            Some(accepted.machine_id),
+            None,
+            "ssh_verify_access",
+            if proof.is_ok() { "success" } else { "rejected" },
+        ),
     )
     .await;
     proof?;
@@ -712,11 +868,42 @@ async fn tunnel(
         Err(error) => Err(error),
     };
     handle.close_dispatch().await;
-    let release_result = release_owner(&state, hello.1, hello.3, connection_epoch).await;
-    handle.cleanup_complete.cancel();
-    state.relays.remove(hello.1, hello.3).await;
-    release_result?;
+    complete_tunnel_owner_cleanup(&state, hello.1, &handle).await?;
     result
+}
+
+async fn complete_tunnel_owner_cleanup(
+    state: &Arc<ServerState>,
+    machine_id: Uuid,
+    handle: &TunnelHandle,
+) -> RelayResult<()> {
+    let decision = state
+        .relays
+        .begin_owner_release(machine_id, handle.route)
+        .await?;
+    let release_result = match decision {
+        OwnerReleaseDecision::Defer => Ok(()),
+        OwnerReleaseDecision::Release => {
+            release_owner(
+                state,
+                machine_id,
+                handle.route.connection_id,
+                handle.route.connection_epoch,
+            )
+            .await
+        }
+    };
+    handle.cleanup_complete.cancel();
+    match decision {
+        OwnerReleaseDecision::Defer => {}
+        OwnerReleaseDecision::Release => {
+            state
+                .relays
+                .finish_owner_release(machine_id, handle.route.connection_id, handle.route)
+                .await;
+        }
+    }
+    release_result
 }
 
 async fn claim_reserved_owner(
@@ -782,7 +969,9 @@ async fn run_tunnel(
                     let _ = response.send(Ok(caller));
                 }
             },
-            Some(frame) = outbound_rx.recv() => send_frame(socket, &frame).await?,
+            Some(frame) = outbound_rx.recv() => {
+                send_route_frame(socket, &frame, &dispatch_open, &barrier, &lease).await?;
+            }
             () = sleep_until(inbound_deadline) => return Err(RelayError::Unavailable),
             message = socket.next() => {
                 let message = message
@@ -816,7 +1005,14 @@ async fn run_tunnel(
                     return Err(RelayError::Unavailable);
                 }
                 ping_nonce = ping_nonce.checked_add(1).ok_or(RelayError::Protocol)?;
-                send_frame(socket, &ServerFrame::Ping { nonce: ping_nonce }).await?;
+                send_route_frame(
+                    socket,
+                    &ServerFrame::Ping { nonce: ping_nonce },
+                    &dispatch_open,
+                    &barrier,
+                    &lease,
+                )
+                .await?;
                 outstanding_pings.push_back(ping_nonce);
             }
         }
@@ -1118,8 +1314,21 @@ async fn claim_owner(
     .await
     .map_err(|_| RelayError::Unavailable)?;
     if transaction.commit().await.is_err() {
-        tracing::error!(%machine_id, %connection_id, connection_epoch, "owner claim commit is ambiguous; hard-fencing node");
         state.lease.hard_fence();
+        tracing::error!(%machine_id, %connection_id, connection_epoch, "owner claim commit is ambiguous; hard-fenced node");
+        let _ = timeout(
+            Duration::from_secs(1),
+            record_audit(
+                state.database.ordinary(),
+                state.database.deployment_id(),
+                "machine_owner",
+                Some(machine_id),
+                None,
+                "claim_observation",
+                "ambiguous",
+            ),
+        )
+        .await;
         return Err(RelayError::Ambiguous);
     }
     Ok(connection_epoch)
@@ -1152,6 +1361,16 @@ async fn release_owner(
         if changed != 1 {
             return Err(RelayError::Fenced);
         }
+        append_audit(
+            &mut transaction,
+            state.database.deployment_id(),
+            "machine_owner",
+            Some(machine_id),
+            None,
+            "release",
+        )
+        .await
+        .map_err(|_| RelayError::Unavailable)?;
         transaction
             .commit()
             .await
@@ -1170,8 +1389,16 @@ async fn lock_deployment(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     state: &ServerState,
 ) -> RelayResult<()> {
-    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment WHERE singleton = true AND id = $1 AND config_epoch = $2 AND server_build_id = $3 AND relay_protocol_version = 1 FOR UPDATE)")
-        .bind(state.database.deployment_id()).bind(state.config.config_epoch()).bind(build::BUILD_ID)
+    let config_proof = state
+        .config
+        .configuration_proof(state.database.deployment_id())
+        .map(Vec::from);
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment WHERE singleton = true AND id = $1 AND config_epoch = $2 AND server_build_id = $3 AND relay_protocol_version = 1 AND profile = $4 AND config_proof IS NOT DISTINCT FROM $5 FOR UPDATE)")
+        .bind(state.database.deployment_id())
+        .bind(state.config.config_epoch())
+        .bind(build::BUILD_ID)
+        .bind(state.config.profile_database_value())
+        .bind(config_proof)
         .fetch_one(&mut **transaction).await.map_err(|_| RelayError::Unavailable)?;
     if valid {
         Ok(())
@@ -1208,6 +1435,21 @@ async fn validate_releasing_node(
     } else {
         Err(RelayError::Fenced)
     }
+}
+
+async fn send_route_frame(
+    socket: &mut WebSocket,
+    frame: &ServerFrame,
+    dispatch_open: &Mutex<bool>,
+    barrier: &CancellationToken,
+    lease: &NodeLease,
+) -> RelayResult<()> {
+    let dispatch_open = dispatch_open.lock().await;
+    lease.check().map_err(|_| RelayError::Fenced)?;
+    if !*dispatch_open || barrier.is_cancelled() {
+        return Err(RelayError::Unavailable);
+    }
+    send_frame(socket, frame).await
 }
 
 async fn receive_frame(socket: &mut WebSocket, deadline: Duration) -> RelayResult<ClientFrame> {
@@ -1340,3 +1582,55 @@ impl std::fmt::Display for RelayError {
     }
 }
 impl std::error::Error for RelayError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn route() -> RouteIdentity {
+        RouteIdentity {
+            route_revision: 3,
+            connection_epoch: 7,
+            connection_id: Uuid::new_v4(),
+        }
+    }
+
+    #[test]
+    fn owner_release_and_lifecycle_transition_have_one_atomic_winner() {
+        let machine_id = Uuid::new_v4();
+        let route = route();
+
+        let mut transition_first = RegistryState::default();
+        assert!(transition_first.begin_transition(machine_id, route));
+        assert_eq!(
+            transition_first.begin_owner_release(machine_id, route),
+            Some(OwnerReleaseDecision::Defer)
+        );
+        assert_eq!(
+            transition_first.owner_exits.get(&machine_id),
+            Some(&OwnerExitState::Transitioning(route))
+        );
+
+        let mut release_first = RegistryState::default();
+        assert_eq!(
+            release_first.begin_owner_release(machine_id, route),
+            Some(OwnerReleaseDecision::Release)
+        );
+        assert!(!release_first.begin_transition(machine_id, route));
+        assert_eq!(
+            release_first.owner_exits.get(&machine_id),
+            Some(&OwnerExitState::Releasing(route))
+        );
+        let replacement_route = RouteIdentity {
+            connection_epoch: route.connection_epoch + 1,
+            ..route
+        };
+        release_first.finish_owner_release(machine_id, replacement_route);
+        assert_eq!(
+            release_first.owner_exits.get(&machine_id),
+            Some(&OwnerExitState::Releasing(route))
+        );
+        release_first.finish_owner_release(machine_id, route);
+        assert!(!release_first.owner_exits.contains_key(&machine_id));
+    }
+}

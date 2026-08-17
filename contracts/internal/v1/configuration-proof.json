@@ -1,0 +1,31 @@
+{
+  "version": "configuration.v1",
+  "domain": "owlmux:cluster-configuration:v1\u0000",
+  "framing": "domain bytes followed by each field as an unsigned 32-bit big-endian byte length and exact field bytes",
+  "fields": [
+    "version",
+    "deployment_id",
+    "config_epoch_i64_be",
+    "server_build_id_utf8",
+    "api_key_sha256",
+    "ssh_encryption_key_sha256",
+    "public_origin_utf8",
+    "origin_policy",
+    "schema_generation",
+    "public_generation",
+    "relay_generation",
+    "internal_generation",
+    "credential_envelope_generation",
+    "owner_auth_timeout_seconds",
+    "owner_max_frame_bytes"
+  ],
+  "constants": {
+    "origin_policy": "exact",
+    "schema_generation": "3",
+    "public_generation": "public.v1",
+    "relay_generation": "relay.v1",
+    "internal_generation": "owner.v1",
+    "credential_envelope_generation": "ssh-envelope.v1"
+  },
+  "algorithm": "HMAC-SHA-256"
+}

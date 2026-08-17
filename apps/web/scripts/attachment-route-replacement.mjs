@@ -8,10 +8,8 @@ if (!server || !machineId || !apiKey) throw new Error("missing route replacement
 const origin = server.replace(/^ws/, "http");
 const socket = new WebSocket(`${server}/attachment/v1/machines/${machineId}`, { origin });
 const deadline = setTimeout(() => fail("route replacement smoke timed out"), 30_000);
-let firstSelectionEpoch = null;
 let selected = false;
 let workspaceReady = false;
-let replacementChooser = false;
 
 function fail(message) {
   clearTimeout(deadline);
@@ -25,14 +23,14 @@ socket.on("open", () => {
 
 socket.on("message", (bytes) => {
   const frame = JSON.parse(bytes.toString());
-  if (frame.type === "session.list" && firstSelectionEpoch === null) {
+  if (frame.type === "session.list" && !selected) {
     if (frame.sessions.length === 0) fail("target fixture has no session");
-    firstSelectionEpoch = frame.selection_epoch;
-    const session = frame.sessions[0];
     selected = true;
+    const session = frame.sessions[0];
     socket.send(
       JSON.stringify({
         type: "session.select",
+        machine_connection_epoch: frame.machine_connection_epoch,
         selection_epoch: frame.selection_epoch,
         session_id: session.session_id,
         session_created: session.session_created,
@@ -42,20 +40,15 @@ socket.on("message", (bytes) => {
     workspaceReady = true;
     console.log("workspace-ready");
   } else if (frame.type === "session.list" && workspaceReady) {
-    if (frame.selection_epoch === firstSelectionEpoch)
-      fail("route replacement reused selection epoch");
-    replacementChooser = true;
-    socket.send(JSON.stringify({ type: "workspace.detach" }));
-    socket.close(1000, "replacement chooser observed");
+    fail("stale attachment crossed a replaced Machine route");
   } else if (frame.type === "workspace.error") {
-    fail(`attachment failed instead of returning to chooser: ${frame.code}`);
+    fail(`attachment failed before route replacement: ${frame.code}`);
   }
 });
 
 socket.on("error", (error) => fail(error.message));
 socket.on("close", () => {
   clearTimeout(deadline);
-  if (!replacementChooser)
-    fail("attachment did not return to a fresh chooser after route replacement");
-  console.log("route replacement returned workspace to a fresh chooser");
+  if (!workspaceReady) fail("attachment closed before workspace was ready");
+  console.log("route replacement closed the stale attachment");
 });

@@ -1,4 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
@@ -25,6 +26,10 @@ impl ApiKey {
             return false;
         };
         bool::from(self.0.as_ref().ct_eq(candidate.0.as_ref()))
+    }
+
+    pub(crate) fn configuration_digest(&self) -> [u8; 32] {
+        Sha256::digest(self.0.as_ref()).into()
     }
 }
 

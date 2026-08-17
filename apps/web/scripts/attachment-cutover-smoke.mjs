@@ -65,6 +65,7 @@ socket.on("message", (bytes) => {
     socket.send(
       JSON.stringify({
         type: "session.select",
+        machine_connection_epoch: frame.machine_connection_epoch,
         selection_epoch: frame.selection_epoch,
         session_id: session.session_id,
         session_created: session.session_created,
@@ -74,6 +75,8 @@ socket.on("message", (bytes) => {
     assert(frame.panes.length === 4, "cutover projection does not contain four panes");
     const active = frame.panes.find((pane) => pane.active);
     assert(active !== undefined, "cutover projection has no active pane");
+    ready = false;
+    liveChunks.length = 0;
     projection = {
       epoch: frame.workspace_epoch,
       paneId: active.pane_id,

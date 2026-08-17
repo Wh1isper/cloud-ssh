@@ -1,76 +1,147 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   publish:
-    name: Build and publish artifacts
+    name: Publish release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - name: Check out release commit
+      - name: Check out release tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Resolve release names
+      - name: Resolve release identity
         id: release
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
           version="${RELEASE_TAG#v}"
-          host="x86_64-unknown-linux-gnu"
+          repository_version="$(python3 - <<'PY'
+          import json
+          import tomllib
+          from pathlib import Path
+
+          versions = {
+              tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"],
+              json.loads(Path("package.json").read_text(encoding="utf-8"))["version"],
+              json.loads(Path("apps/web/package.json").read_text(encoding="utf-8"))["version"],
+              json.loads(Path("docs/package.json").read_text(encoding="utf-8"))["version"],
+          }
+          if len(versions) != 1:
+              raise SystemExit(f"repository versions disagree: {sorted(versions)}")
+          print(versions.pop())
+          PY
+          )"
+          [[ "$version" == "$repository_version" ]]
+          revision="$(git rev-parse HEAD)"
+          [[ "$(git rev-list --max-count=1 "$RELEASE_TAG")" == "$revision" ]]
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
           {
             echo "version=$version"
-            echo "host=$host"
+            echo "revision=$revision"
+            echo "host=x86_64-unknown-linux-gnu"
             echo "image-tag=${version//+/_}"
+            echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
-      - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Build Server and Relay
-        run: cargo build --release --locked --package owlmux-server --package owlmux-relay
-      - name: Package binary archives
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install pnpm
+        run: npm install --global pnpm@11.20.0
+      - name: Build release Web assets
+        env:
+          REVISION: ${{ steps.release.outputs.revision }}
+        run: |
+          pnpm install --filter @owlmux/web... --frozen-lockfile
+          pnpm --filter @owlmux/web build
+          printf '%s\n' "$REVISION" > apps/web/dist/SOURCE_REVISION
+      - name: Build portable Server and Relay binaries
+        env:
+          REVISION: ${{ steps.release.outputs.revision }}
+        run: |
+          mkdir release-target
+          docker run --rm \
+            --env CARGO_TARGET_DIR=/target \
+            --env OWLMUX_BUILD_REVISION="$REVISION" \
+            --env RUSTUP_TOOLCHAIN=1.97.1 \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$GITHUB_WORKSPACE/release-target:/target" \
+            --workdir /workspace \
+            rust:1.97.1-bullseye \
+            cargo build --release --locked --package owlmux-server --package owlmux-relay
+      - name: Verify binary glibc baseline
+        run: |
+          python3 scripts/check-glibc-baseline.py release-target/release/owlmux-server 2.35
+          python3 scripts/check-glibc-baseline.py release-target/release/owlmux-relay 2.35
+      - name: Package release archives
         env:
           VERSION: ${{ steps.release.outputs.version }}
           HOST: ${{ steps.release.outputs.host }}
+          REVISION: ${{ steps.release.outputs.revision }}
         run: |
           mkdir -p dist/server dist/relay
-          cp target/release/owlmux-server dist/server/
-          cp target/release/owlmux-relay dist/relay/
+          cp release-target/release/owlmux-server dist/server/
+          cp release-target/release/owlmux-relay dist/relay/
           cp LICENSE dist/server/LICENSE
           cp LICENSE dist/relay/LICENSE
           cp crates/owlmux-server/README.md dist/server/README.md
           cp crates/owlmux-relay/README.md dist/relay/README.md
-          tar -czf "dist/owlmux-server-${VERSION}-${HOST}.tar.gz" -C dist/server owlmux-server LICENSE README.md
-          tar -czf "dist/owlmux-relay-${VERSION}-${HOST}.tar.gz" -C dist/relay owlmux-relay LICENSE README.md
+          cp -R apps/web/dist dist/server/web
+          cp -R contracts dist/server/contracts
+          cp -R crates/owlmux-server/migrations dist/server/migrations
+          mkdir -p dist/relay/contracts
+          cp -R contracts/relay dist/relay/contracts/relay
+          printf '%s\n' "$REVISION" | tee dist/server/SOURCE_REVISION dist/relay/SOURCE_REVISION >/dev/null
+          grep -qx "$REVISION" dist/server/web/SOURCE_REVISION
+          tar -czf "dist/owlmux-server-${VERSION}-${HOST}.tar.gz" -C dist/server owlmux-server LICENSE README.md SOURCE_REVISION web contracts migrations
+          tar -czf "dist/owlmux-relay-${VERSION}-${HOST}.tar.gz" -C dist/relay owlmux-relay LICENSE README.md SOURCE_REVISION contracts
           (
             cd dist
             sha256sum owlmux-*.tar.gz > SHA256SUMS
+            sha256sum --check SHA256SUMS
           )
+          tar -tzf "dist/owlmux-server-${VERSION}-${HOST}.tar.gz" > dist/server-contents.txt
+          tar -tzf "dist/owlmux-relay-${VERSION}-${HOST}.tar.gz" > dist/relay-contents.txt
+          grep -qx 'web/index.html' dist/server-contents.txt
+          grep -qx 'migrations/0003_cluster_membership.sql' dist/server-contents.txt
+          grep -qx 'contracts/relay/v1/manifest.json' dist/relay-contents.txt
+          rm dist/server-contents.txt dist/relay-contents.txt
       - name: Build release Server image
         env:
           IMAGE: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
+          REVISION: ${{ steps.release.outputs.revision }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           image="${IMAGE,,}"
           docker build --pull \
             --build-arg "OWLMUX_VERSION=$VERSION" \
-            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "OWLMUX_BUILD_REVISION=$REVISION" \
+            --build-arg "VCS_REF=$REVISION" \
             --build-arg "SOURCE_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$image:$IMAGE_TAG" \
             .
+          scripts/docker/smoke-server-image.sh "$image:$IMAGE_TAG"
       - name: Log in to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -79,21 +150,21 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
-        run: |
-          image="${IMAGE,,}"
-          docker push "$image:$IMAGE_TAG"
-      - name: Promote final release image to latest
-        if: github.event.release.prerelease == false
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}
-          IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
-        run: |
-          image="${IMAGE,,}"
-          docker tag "$image:$IMAGE_TAG" "$image:latest"
-          docker push "$image:latest"
-      - name: Upload release assets
+        run: docker push "${IMAGE,,}:$IMAGE_TAG"
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/owlmux-*.tar.gz dist/SHA256SUMS --clobber
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already has a GitHub Release; preserving it"
+            exit 0
+          fi
+          args=(--verify-tag --title "OwlMux $VERSION" --generate-notes)
+          if [[ "$PRERELEASE" == true ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" dist/owlmux-*.tar.gz dist/SHA256SUMS "${args[@]}"

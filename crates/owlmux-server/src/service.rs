@@ -1,14 +1,23 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use tokio::sync::Semaphore;
 
 use crate::{
-    config::Config, deployment::NodeLease, relay::RelayRegistry, ssh::SshRuntime, storage::Database,
+    config::Config,
+    deployment::NodeLease,
+    internal::{InternalClient, InternalLimits},
+    relay::RelayRegistry,
+    ssh::SshRuntime,
+    storage::Database,
+    writer::WriterRegistry,
 };
 
 pub struct ServerState {
@@ -17,10 +26,15 @@ pub struct ServerState {
     pub lease: Arc<NodeLease>,
     pub relays: RelayRegistry,
     pub ssh: Arc<SshRuntime>,
+    pub writers: WriterRegistry,
+    pub internal: Option<InternalClient>,
     pub relay_connection_limit: Arc<Semaphore>,
     pub attachment_connection_limit: Arc<Semaphore>,
+    pub api_mutation_limit: Arc<Semaphore>,
+    pub(crate) internal_limits: InternalLimits,
     pub preauth_attempt_limit: Arc<Semaphore>,
     pub source_admission: SourceAdmission,
+    pub observability: Observability,
 }
 
 impl ServerState {
@@ -29,7 +43,10 @@ impl ServerState {
     /// # Errors
     ///
     /// Returns a sanitized startup error if storage initialization or node registration fails.
-    pub async fn bootstrap(config: Config) -> Result<Arc<Self>, BootstrapError> {
+    pub async fn bootstrap(
+        config: Config,
+        internal: Option<InternalClient>,
+    ) -> Result<Arc<Self>, BootstrapError> {
         let config = Arc::new(config);
         let database = Database::bootstrap(&config).await?;
         let ssh = SshRuntime::create(config.ssh_runtime_root())?;
@@ -41,12 +58,87 @@ impl ServerState {
             lease,
             relays,
             ssh,
+            writers: WriterRegistry::new(),
+            internal,
             relay_connection_limit: Arc::new(Semaphore::new(128)),
             attachment_connection_limit: Arc::new(Semaphore::new(128)),
+            api_mutation_limit: Arc::new(Semaphore::new(32)),
+            internal_limits: InternalLimits::new(),
             preauth_attempt_limit: Arc::new(Semaphore::new(64)),
             source_admission: SourceAdmission::new(),
+            observability: Observability::default(),
         }))
     }
+}
+
+#[derive(Default)]
+pub struct Observability {
+    api_authenticated_requests: AtomicU64,
+    api_auth_rejections: AtomicU64,
+    api_mutation_overloads: AtomicU64,
+    owner_local_resolutions: AtomicU64,
+    owner_remote_resolutions: AtomicU64,
+    owner_absent_resolutions: AtomicU64,
+    owner_resolution_failures: AtomicU64,
+}
+
+impl Observability {
+    pub(crate) fn api_authenticated(&self) {
+        self.api_authenticated_requests
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn api_auth_rejected(&self) {
+        self.api_auth_rejections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn api_mutation_overloaded(&self) {
+        self.api_mutation_overloads.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn owner_local(&self) {
+        self.owner_local_resolutions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn owner_remote(&self) {
+        self.owner_remote_resolutions
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn owner_absent(&self) {
+        self.owner_absent_resolutions
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn owner_resolution_failed(&self) {
+        self.owner_resolution_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> ObservabilitySnapshot {
+        ObservabilitySnapshot {
+            api_authenticated_requests_total: self
+                .api_authenticated_requests
+                .load(Ordering::Relaxed),
+            api_auth_rejections_total: self.api_auth_rejections.load(Ordering::Relaxed),
+            api_mutation_overloads_total: self.api_mutation_overloads.load(Ordering::Relaxed),
+            owner_local_resolutions_total: self.owner_local_resolutions.load(Ordering::Relaxed),
+            owner_remote_resolutions_total: self.owner_remote_resolutions.load(Ordering::Relaxed),
+            owner_absent_resolutions_total: self.owner_absent_resolutions.load(Ordering::Relaxed),
+            owner_resolution_failures_total: self.owner_resolution_failures.load(Ordering::Relaxed),
+        }
+    }
+}
+
+pub struct ObservabilitySnapshot {
+    pub api_authenticated_requests_total: u64,
+    pub api_auth_rejections_total: u64,
+    pub api_mutation_overloads_total: u64,
+    pub owner_local_resolutions_total: u64,
+    pub owner_remote_resolutions_total: u64,
+    pub owner_absent_resolutions_total: u64,
+    pub owner_resolution_failures_total: u64,
 }
 
 const MAX_ADMISSION_SOURCES: usize = 4096;

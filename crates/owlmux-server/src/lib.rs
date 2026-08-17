@@ -19,15 +19,19 @@ pub mod attachment;
 pub mod auth;
 pub mod build;
 pub mod clock;
+pub mod cluster;
 pub mod config;
 pub mod crypto;
 pub mod deployment;
+pub mod internal;
+pub mod owner;
 pub mod relay;
 pub mod runtime;
 pub mod service;
 pub mod ssh;
 pub mod storage;
 pub mod tmux;
+pub mod writer;
 
 mod generated {
     pub mod contracts;
@@ -71,7 +75,7 @@ pub fn app(web_dir: impl Into<PathBuf>) -> Router {
         })
 }
 
-/// Build the single-node product router after durable bootstrap and node registration.
+/// Build the product router after durable bootstrap and node registration.
 pub fn product_app(web_dir: impl Into<PathBuf>, state: Arc<service::ServerState>) -> Router {
     debug_assert_eq!(generated::contracts::PUBLIC_CONTRACT_VERSION, "public.v1");
     debug_assert!(generated::contracts::CONTROL_SCHEMA_ID.ends_with("control.schema.json"));
@@ -98,6 +102,14 @@ pub fn product_app(web_dir: impl Into<PathBuf>, state: Arc<service::ServerState>
         "attachment.v1"
     );
     debug_assert_eq!(generated::contracts::ATTACHMENT_MAX_FRAME_BYTES, 32_768);
+    debug_assert_eq!(generated::contracts::INTERNAL_CONTRACT_VERSION, "owner.v1");
+    debug_assert_eq!(generated::contracts::INTERNAL_CLOSE_NORMAL, 1000);
+    debug_assert_eq!(generated::contracts::INTERNAL_CLOSE_PROTOCOL_ERROR, 1002);
+    debug_assert_eq!(generated::contracts::INTERNAL_CLOSE_POLICY_VIOLATION, 1008);
+    debug_assert_eq!(
+        generated::contracts::INTERNAL_CLOSE_TEMPORARILY_UNAVAILABLE,
+        1013
+    );
     let web = web_service(web_dir.into());
     Router::new()
         .route("/health", get(product_health))
@@ -164,8 +176,12 @@ async fn foundation_health(State(state): State<FoundationState>) -> Json<StatusR
 async fn foundation_ready(State(state): State<FoundationState>) -> Json<StatusResponse> {
     Json(status("foundation", "ready", state.build))
 }
-async fn product_health(State(_state): State<Arc<service::ServerState>>) -> Json<StatusResponse> {
-    Json(status("single_node", "ok", build::metadata()))
+async fn product_health(State(state): State<Arc<service::ServerState>>) -> Json<StatusResponse> {
+    Json(status(
+        state.config.profile_database_value(),
+        "ok",
+        build::metadata(),
+    ))
 }
 async fn product_ready(
     State(state): State<Arc<service::ServerState>>,
@@ -177,7 +193,11 @@ async fn product_ready(
     };
     (
         code,
-        Json(status("single_node", status_value, build::metadata())),
+        Json(status(
+            state.config.profile_database_value(),
+            status_value,
+            build::metadata(),
+        )),
     )
 }
 fn status(

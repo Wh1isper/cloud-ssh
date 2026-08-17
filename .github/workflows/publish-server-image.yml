@@ -1,39 +1,49 @@
 name: Publish Server Image
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: server-image-${{ github.ref }}
+  group: server-image-main
   cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish development Server image
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Check out repository
+      - name: Check out qualified revision
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - name: Build Server image
         env:
           IMAGE: ghcr.io/${{ github.repository }}
+          REVISION: ${{ github.event.workflow_run.head_sha }}
         run: |
           image="${IMAGE,,}"
           docker build --pull \
-            --build-arg "OWLMUX_VERSION=$GITHUB_SHA" \
-            --build-arg "VCS_REF=$GITHUB_SHA" \
+            --build-arg "OWLMUX_VERSION=dev-${REVISION:0:12}" \
+            --build-arg "OWLMUX_BUILD_REVISION=$REVISION" \
+            --build-arg "VCS_REF=$REVISION" \
             --build-arg "SOURCE_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$image:dev" \
             .
+          scripts/docker/smoke-server-image.sh "$image:dev"
       - name: Log in to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ github.token }}

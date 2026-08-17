@@ -206,9 +206,9 @@ The runtime image contains no Rust/Node toolchain, package manager, source tree,
 
 ## 15. CI and release
 
-CI on pull requests and `main` pushes is the source-validation authority. It installs locked dependencies; checks formatting and lint; tests and builds Rust, Web, docs, and repository invariants; dry-runs docs deployment; and builds and smoke-tests the Server image.
+CI on pull requests and `main` pushes is the source-validation authority. It installs and audits locked dependencies; checks formatting and lint; tests and builds Rust, Web, docs, and repository invariants; dry-runs docs deployment; verifies the qualified Relay glibc baseline; and builds and smoke-tests the Server image. A successful exact-`main` CI run is the only trigger accepted by documentation and development-image publication.
 
-Release workflows consume a protected CI-qualified commit and perform artifact construction, checksums, GHCR upload, GitHub Release publication, and minimal version/tag validation. They MUST NOT repeat the source lint/test suite as a second authority.
+Tag-driven release operates on a pushed, CI-qualified tag and performs artifact construction, source-revision metadata, checksums, GHCR upload, GitHub Release publication, and exact repository-version/tag validation. It does not repeat CI qualification or the source lint/test suite as a second authority.
 
 Release deliverables are:
 

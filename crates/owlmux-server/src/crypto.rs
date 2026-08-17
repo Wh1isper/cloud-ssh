@@ -2,6 +2,7 @@ use chacha20poly1305::{
     KeyInit as _, XChaCha20Poly1305, XNonce,
     aead::{Aead as _, AeadCore as _, OsRng, Payload},
 };
+use sha2::{Digest as _, Sha256};
 use ssh_key::{Algorithm, HashAlg, LineEnding, PrivateKey};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -22,6 +23,10 @@ impl EncryptionKey {
     /// Returns an opaque error for malformed, noncanonical, or wrong-length values.
     pub fn parse(value: &str) -> Result<Self, SecretFormatError> {
         Ok(Self(Zeroizing::new(decode_canonical_32(value)?)))
+    }
+
+    pub(crate) fn configuration_digest(&self) -> [u8; 32] {
+        Sha256::digest(self.0.as_ref()).into()
     }
 }
 

@@ -47,6 +47,7 @@ export default defineConfig({
           { text: "Deployment access and credentials", link: "/guide/authentication" },
           { text: "Relay and roaming", link: "/guide/relay" },
           { text: "Deployment", link: "/guide/deployment" },
+          { text: "Recovery and incident response", link: "/guide/recovery" },
           { text: "Development", link: "/guide/development" },
           { text: "Security", link: "/guide/security" },
         ],

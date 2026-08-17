@@ -22,6 +22,9 @@ pub struct NodeLease {
     incarnation_id: Uuid,
     config_epoch: i64,
     display_name: Option<String>,
+    profile: &'static str,
+    config_proof: Option<Vec<u8>>,
+    internal_wss_url: Option<String>,
     ttl: Duration,
     safety_margin: Duration,
     clock: BootClock,
@@ -29,6 +32,7 @@ pub struct NodeLease {
     fenced: AtomicBool,
     fence_token: CancellationToken,
     draining: AtomicBool,
+    dependency_ready: AtomicBool,
 }
 
 impl NodeLease {
@@ -38,11 +42,17 @@ impl NodeLease {
     ///
     /// Returns a bounded startup error when the clock, Deployment, or database predicate fails.
     pub async fn register(database: Database, config: &Config) -> Result<Arc<Self>, LeaseError> {
+        let deployment_id = database.deployment_id();
         let lease = Arc::new(Self {
             database,
             incarnation_id: Uuid::new_v4(),
             config_epoch: config.config_epoch(),
             display_name: config.node_name().map(ToOwned::to_owned),
+            profile: config.profile_database_value(),
+            config_proof: config.configuration_proof(deployment_id).map(Vec::from),
+            internal_wss_url: config
+                .cluster()
+                .map(|cluster| cluster.advertised_url().to_owned()),
             ttl: config.lease_ttl(),
             safety_margin: config.lease_safety_margin(),
             clock: BootClock::default(),
@@ -50,6 +60,7 @@ impl NodeLease {
             fenced: AtomicBool::new(false),
             fence_token: CancellationToken::new(),
             draining: AtomicBool::new(false),
+            dependency_ready: AtomicBool::new(true),
         });
         let before = lease.clock.now().map_err(|_| LeaseError::Fenced)?;
         lease.register_database().await?;
@@ -64,7 +75,9 @@ impl NodeLease {
 
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        !self.draining.load(Ordering::Acquire) && self.check().is_ok()
+        self.dependency_ready.load(Ordering::Acquire)
+            && !self.draining.load(Ordering::Acquire)
+            && self.check().is_ok()
     }
 
     #[must_use]
@@ -110,11 +123,16 @@ impl NodeLease {
             match self.renew_database().await {
                 Ok(()) => {
                     if let Err(error) = self.install_deadline(before) {
+                        self.dependency_ready.store(false, Ordering::Release);
                         warn!(%error, incarnation_id = %self.incarnation_id, "node lease renewal could not install a local deadline");
                         return;
                     }
+                    self.dependency_ready.store(true, Ordering::Release);
                 }
-                Err(error) => warn!(%error, "node lease renewal failed"),
+                Err(error) => {
+                    self.dependency_ready.store(false, Ordering::Release);
+                    warn!(%error, "node lease renewal failed");
+                }
             }
         }
     }
@@ -133,7 +151,13 @@ impl NodeLease {
             .begin()
             .await
             .map_err(|_| LeaseError::Database)?;
-        validate_deployment(&mut transaction, self.config_epoch).await?;
+        validate_deployment(
+            &mut transaction,
+            self.config_epoch,
+            self.profile,
+            self.config_proof.as_deref(),
+        )
+        .await?;
         let changed = sqlx::query(
             "UPDATE server_nodes SET state = 'draining', renewed_at = clock_timestamp() WHERE incarnation_id = $1 AND state = 'serving' AND config_epoch = $2 AND server_build_id = $3 AND lease_until > clock_timestamp()",
         )
@@ -147,6 +171,16 @@ impl NodeLease {
         if changed != 1 {
             return Err(self.fence());
         }
+        append_audit(
+            &mut transaction,
+            self.database.deployment_id(),
+            "server_node",
+            None,
+            None,
+            "drain",
+        )
+        .await
+        .map_err(map_storage)?;
         transaction
             .commit()
             .await
@@ -167,7 +201,13 @@ impl NodeLease {
                 .begin()
                 .await
                 .map_err(|_| LeaseError::Database)?;
-            validate_deployment(&mut transaction, self.config_epoch).await?;
+            validate_deployment(
+            &mut transaction,
+            self.config_epoch,
+            self.profile,
+            self.config_proof.as_deref(),
+        )
+        .await?;
             let changed = sqlx::query(
                 "DELETE FROM server_nodes WHERE incarnation_id = $1 AND state = 'draining' AND config_epoch = $2 AND server_build_id = $3",
             )
@@ -181,6 +221,16 @@ impl NodeLease {
             if changed != 1 {
                 return Err(LeaseError::Fenced);
             }
+            append_audit(
+                &mut transaction,
+                self.database.deployment_id(),
+                "server_node",
+                None,
+                None,
+                "release",
+            )
+            .await
+            .map_err(map_storage)?;
             transaction.commit().await.map_err(|_| LeaseError::Database)
         }
         .await;
@@ -195,15 +245,33 @@ impl NodeLease {
             .begin()
             .await
             .map_err(|_| LeaseError::Database)?;
-        let deployment_id = validate_deployment(&mut transaction, self.config_epoch).await?;
+        let deployment_id = validate_deployment(
+            &mut transaction,
+            self.config_epoch,
+            self.profile,
+            self.config_proof.as_deref(),
+        )
+        .await?;
+        if self.profile == "single_node" {
+            let another_valid: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM server_nodes WHERE lease_until > clock_timestamp())",
+            )
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| LeaseError::Database)?;
+            if another_valid {
+                return Err(LeaseError::ConfigurationMismatch);
+            }
+        }
         let ttl = i64::try_from(self.ttl.as_secs()).map_err(|_| LeaseError::Database)?;
         sqlx::query(
-            "INSERT INTO server_nodes (incarnation_id, display_name, state, config_epoch, server_build_id, relay_protocol_version, lease_until) VALUES ($1, $2, 'serving', $3, $4, 1, clock_timestamp() + $5 * interval '1 second')",
+            "INSERT INTO server_nodes (incarnation_id, display_name, state, config_epoch, server_build_id, relay_protocol_version, internal_wss_url, lease_until) VALUES ($1, $2, 'serving', $3, $4, 1, $5, clock_timestamp() + $6 * interval '1 second')",
         )
         .bind(self.incarnation_id)
         .bind(&self.display_name)
         .bind(self.config_epoch)
         .bind(build::BUILD_ID)
+        .bind(&self.internal_wss_url)
         .bind(ttl)
         .execute(&mut *transaction)
         .await
@@ -228,7 +296,13 @@ impl NodeLease {
             .begin()
             .await
             .map_err(|_| LeaseError::Database)?;
-        validate_deployment(&mut transaction, self.config_epoch).await?;
+        validate_deployment(
+            &mut transaction,
+            self.config_epoch,
+            self.profile,
+            self.config_proof.as_deref(),
+        )
+        .await?;
         let ttl = i64::try_from(self.ttl.as_secs()).map_err(|_| LeaseError::Database)?;
         let changed = sqlx::query(
             "UPDATE server_nodes SET lease_until = clock_timestamp() + $1 * interval '1 second', renewed_at = clock_timestamp() WHERE incarnation_id = $2 AND state = 'serving' AND config_epoch = $3 AND server_build_id = $4",
@@ -279,12 +353,16 @@ impl NodeLease {
 async fn validate_deployment(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     config_epoch: i64,
+    profile: &str,
+    config_proof: Option<&[u8]>,
 ) -> Result<Uuid, LeaseError> {
     let deployment_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM deployment WHERE singleton = true AND config_epoch = $1 AND server_build_id = $2 AND relay_protocol_version = 1 FOR UPDATE",
+        "SELECT id FROM deployment WHERE singleton = true AND config_epoch = $1 AND server_build_id = $2 AND relay_protocol_version = 1 AND profile = $3 AND config_proof IS NOT DISTINCT FROM $4 FOR UPDATE",
     )
     .bind(config_epoch)
     .bind(build::BUILD_ID)
+    .bind(profile)
+    .bind(config_proof)
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| LeaseError::Database)?

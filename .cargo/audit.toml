@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    # Lock-only optional dependency metadata from sqlx and ssh-key. The rsa crate is absent from the all-target build graph; verify with `cargo tree --target all -i rsa`.
+    "RUSTSEC-2023-0071",
+]

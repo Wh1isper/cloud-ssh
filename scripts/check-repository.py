@@ -22,6 +22,15 @@ FORBIDDEN = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (LEGACY_PRODUCT, LEGACY_REPOSITORY, LEGACY_IDENTIFIER)
 )
+PLAN_LABEL_IN_PATH_PART = re.compile(
+    r"(?:^|[-_.])(?:blocks?|milestones?|phases?)[-_.]?[0-9a-d](?:[-_.]|$)",
+    re.IGNORECASE,
+)
+PLAN_LABEL_IN_SOURCE = re.compile(
+    r"\b(?:blocks?|milestones?)\s*[0-9]+(?:\s*[-–]\s*[0-9]+)?\b|\bphase\s+[a-d]\b",
+    re.IGNORECASE,
+)
+PLANNING_DOCUMENT_ROOTS = {"local-reference", "spec"}
 REQUIRED = (
     "AGENTS.md",
     "Cargo.toml",
@@ -39,6 +48,7 @@ TEXT_SUFFIXES = {
     ".html",
     ".js",
     ".json",
+    ".mjs",
     ".jsonc",
     ".md",
     ".py",
@@ -67,17 +77,47 @@ def is_checked_file(path: Path) -> bool:
     )
 
 
+def path_has_plan_label(relative: Path) -> bool:
+    return any(PLAN_LABEL_IN_PATH_PART.search(part) for part in relative.parts)
+
+
+def scanner_self_check() -> list[str]:
+    path_cases = (
+        (Path("scripts") / ("block" + "-4.sh"), True),
+        (Path("scripts") / ("milestone" + "-2") / "test.sh", True),
+        (Path("scripts") / ("phase" + "-a") / "test.sh", True),
+        (Path("scripts") / "docker" / "e2e-single-node.sh", False),
+    )
+    failures = [
+        "implementation-plan path scanner self-check failed"
+        for path, expected in path_cases
+        if path_has_plan_label(path) != expected
+    ]
+    source_cases = (("Block" + " 4", True), ("single-node", False))
+    failures.extend(
+        "implementation-plan source scanner self-check failed"
+        for value, expected in source_cases
+        if bool(PLAN_LABEL_IN_SOURCE.search(value)) != expected
+    )
+    return failures
+
+
 def main() -> int:
-    failures: list[str] = []
+    failures = scanner_self_check()
 
     for required in REQUIRED:
         if not (ROOT / required).is_file():
             failures.append(f"missing required file: {required}")
 
     for path in sorted(ROOT.rglob("*")):
+        relative = path.relative_to(ROOT)
+        excluded_path = bool(EXCLUDED_PARTS.intersection(relative.parts)) or any(
+            relative.parts[: len(prefix)] == prefix for prefix in EXCLUDED_PREFIXES
+        )
+        if not excluded_path and path_has_plan_label(relative):
+            failures.append(f"implementation-plan label in repository path: {relative}")
         if not is_checked_file(path):
             continue
-        relative = path.relative_to(ROOT)
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -86,6 +126,11 @@ def main() -> int:
             if pattern.search(str(relative)) or pattern.search(content):
                 failures.append(f"legacy product reference in {relative}: {pattern.pattern}")
                 break
+        if (
+            relative.parts[0] not in PLANNING_DOCUMENT_ROOTS
+            and PLAN_LABEL_IN_SOURCE.search(content)
+        ):
+            failures.append(f"implementation-plan label in product source: {relative}")
 
     if failures:
         print("\n".join(failures))

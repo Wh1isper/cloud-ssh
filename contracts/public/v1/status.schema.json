@@ -13,7 +13,7 @@
       "type": "object"
     },
     "service": { "const": "owlmux-server" },
-    "stage": { "enum": ["foundation", "single_node"] },
+    "stage": { "enum": ["foundation", "single_node", "clustered"] },
     "status": { "enum": ["ok", "ready", "not_ready"] }
   },
   "required": ["service", "stage", "status", "build"],

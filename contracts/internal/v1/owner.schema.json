@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlmux.dev/contracts/internal/v1/owner.schema.json",
+  "title": "OwlMux internal owner protocol",
+  "oneOf": [
+    { "$ref": "#/$defs/challenge" },
+    { "$ref": "#/$defs/authenticate" },
+    { "$ref": "#/$defs/accepted" },
+    { "$ref": "#/$defs/invalidationPrepare" },
+    { "$ref": "#/$defs/invalidationReady" },
+    { "$ref": "#/$defs/invalidationFinish" },
+    { "$ref": "#/$defs/invalidationResult" }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "canonicalEpoch": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "base64url32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "protocol", "destination_incarnation_id", "challenge"],
+      "properties": {
+        "type": { "const": "owner.challenge" },
+        "protocol": { "const": "owner.v1" },
+        "destination_incarnation_id": { "$ref": "#/$defs/uuid" },
+        "challenge": { "$ref": "#/$defs/base64url32" }
+      }
+    },
+    "authenticate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "source_incarnation_id", "destination_incarnation_id", "machine_id", "route_revision", "connection_epoch", "connection_class", "source_nonce", "trace_id", "response"],
+      "properties": {
+        "type": { "const": "owner.authenticate" },
+        "source_incarnation_id": { "$ref": "#/$defs/uuid" },
+        "destination_incarnation_id": { "$ref": "#/$defs/uuid" },
+        "machine_id": { "$ref": "#/$defs/uuid" },
+        "route_revision": { "$ref": "#/$defs/canonicalEpoch" },
+        "connection_epoch": { "$ref": "#/$defs/canonicalEpoch" },
+        "connection_class": { "enum": ["attachment", "control"] },
+        "source_nonce": { "$ref": "#/$defs/base64url32" },
+        "trace_id": { "$ref": "#/$defs/uuid" },
+        "response": { "$ref": "#/$defs/base64url32" }
+      }
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "owner.accepted" }
+      }
+    },
+    "invalidationPrepare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "machine.invalidation.prepare" }
+      }
+    },
+    "invalidationReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "machine.invalidation.ready" }
+      }
+    },
+    "invalidationFinish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "committed"],
+      "properties": {
+        "type": { "const": "machine.invalidation.finish" },
+        "committed": { "type": "boolean" }
+      }
+    },
+    "invalidationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "outcome"],
+      "properties": {
+        "type": { "const": "machine.invalidation.result" },
+        "outcome": { "enum": ["completed", "aborted"] }
+      }
+    }
+  }
+}

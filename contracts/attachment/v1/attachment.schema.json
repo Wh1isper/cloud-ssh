@@ -1,14 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://owlmux.dev/contracts/attachment/v1/attachment.schema.json",
-  "title": "OwlMux read-only attachment v1",
+  "title": "OwlMux interactive attachment v1",
   "oneOf": [{ "$ref": "#/$defs/clientFrame" }, { "$ref": "#/$defs/serverFrame" }],
   "$defs": {
     "clientFrame": {
       "oneOf": [
         { "$ref": "#/$defs/auth" },
+        { "$ref": "#/$defs/writerClaim" },
+        { "$ref": "#/$defs/writerTakeover" },
         { "$ref": "#/$defs/select" },
+        { "$ref": "#/$defs/sessionRefresh" },
+        { "$ref": "#/$defs/createSession" },
         { "$ref": "#/$defs/returnToChooser" },
+        { "$ref": "#/$defs/selectWindow" },
+        { "$ref": "#/$defs/selectPane" },
+        { "$ref": "#/$defs/paneInput" },
+        { "$ref": "#/$defs/clientResize" },
+        { "$ref": "#/$defs/projectionRefresh" },
         { "$ref": "#/$defs/detach" }
       ]
     },
@@ -16,6 +25,8 @@
       "oneOf": [
         { "$ref": "#/$defs/phase" },
         { "$ref": "#/$defs/sessionList" },
+        { "$ref": "#/$defs/writerState" },
+        { "$ref": "#/$defs/operationResult" },
         { "$ref": "#/$defs/projection" },
         { "$ref": "#/$defs/paneSnapshot" },
         { "$ref": "#/$defs/output" },
@@ -31,22 +42,189 @@
         "api_key": { "type": "string", "minLength": 56, "maxLength": 64 }
       }
     },
+    "writerClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "attachment_epoch",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "type": { "const": "writer.claim" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "attachment_epoch": { "type": "string", "format": "uuid" },
+        "columns": { "$ref": "#/$defs/dimension" },
+        "rows": { "$ref": "#/$defs/dimension" }
+      }
+    },
+    "writerTakeover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "attachment_epoch",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "type": { "const": "writer.takeover" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "attachment_epoch": { "type": "string", "format": "uuid" },
+        "columns": { "$ref": "#/$defs/dimension" },
+        "rows": { "$ref": "#/$defs/dimension" }
+      }
+    },
     "select": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "selection_epoch", "session_id", "session_created"],
+      "required": [
+        "type",
+        "machine_connection_epoch",
+        "selection_epoch",
+        "session_id",
+        "session_created"
+      ],
       "properties": {
         "type": { "const": "session.select" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
         "selection_epoch": { "type": "string", "format": "uuid" },
         "session_id": { "$ref": "#/$defs/sessionId" },
         "session_created": { "type": "integer", "minimum": 1 }
       }
     },
+    "sessionRefresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "machine_connection_epoch", "selection_epoch"],
+      "properties": {
+        "type": { "const": "session.refresh" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "selection_epoch": { "type": "string", "format": "uuid" }
+      }
+    },
+    "createSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "selection_epoch",
+        "name"
+      ],
+      "properties": {
+        "type": { "const": "session.create" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "selection_epoch": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
     "returnToChooser": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type"],
-      "properties": { "type": { "const": "workspace.return_to_chooser" } }
+      "required": ["type", "machine_connection_epoch", "workspace_epoch"],
+      "properties": {
+        "type": { "const": "workspace.return_to_chooser" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" }
+      }
+    },
+    "selectWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "workspace_epoch",
+        "window_id"
+      ],
+      "properties": {
+        "type": { "const": "window.select" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "window_id": { "$ref": "#/$defs/windowId" }
+      }
+    },
+    "selectPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "workspace_epoch",
+        "pane_id"
+      ],
+      "properties": {
+        "type": { "const": "pane.select" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "pane_id": { "$ref": "#/$defs/paneId" }
+      }
+    },
+    "paneInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "workspace_epoch",
+        "pane_id",
+        "data_base64"
+      ],
+      "properties": {
+        "type": { "const": "pane.input" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "pane_id": { "$ref": "#/$defs/paneId" },
+        "data_base64": { "$ref": "#/$defs/inputBytes" }
+      }
+    },
+    "clientResize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "machine_connection_epoch",
+        "workspace_epoch",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "type": { "const": "client.resize" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "columns": { "$ref": "#/$defs/dimension" },
+        "rows": { "$ref": "#/$defs/dimension" }
+      }
+    },
+    "projectionRefresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "machine_connection_epoch", "workspace_epoch"],
+      "properties": {
+        "type": { "const": "workspace.refresh" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "workspace_epoch": { "type": "string", "format": "uuid" }
+      }
     },
     "detach": {
       "type": "object",
@@ -68,6 +246,7 @@
       "additionalProperties": false,
       "required": [
         "type",
+        "machine_connection_epoch",
         "selection_epoch",
         "tmux_client_version",
         "tmux_server_version",
@@ -75,6 +254,7 @@
       ],
       "properties": {
         "type": { "const": "session.list" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
         "selection_epoch": { "type": "string", "format": "uuid" },
         "tmux_client_version": { "type": "string", "maxLength": 32 },
         "tmux_server_version": {
@@ -88,6 +268,49 @@
           "maxItems": 128,
           "items": { "$ref": "#/$defs/session" }
         }
+      }
+    },
+    "writerState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "machine_connection_epoch",
+        "attachment_epoch",
+        "role",
+        "writer_available"
+      ],
+      "properties": {
+        "type": { "const": "writer.state" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
+        "attachment_epoch": { "type": "string", "format": "uuid" },
+        "role": { "enum": ["observer", "writer"] },
+        "writer_available": { "type": "boolean" }
+      }
+    },
+    "operationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "operation", "outcome", "code", "message"],
+      "properties": {
+        "type": { "const": "operation.result" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "operation": {
+          "enum": [
+            "writer.claim",
+            "writer.takeover",
+            "session.refresh",
+            "session.create",
+            "window.select",
+            "pane.select",
+            "pane.input",
+            "client.resize",
+            "workspace.refresh"
+          ]
+        },
+        "outcome": { "enum": ["succeeded", "failed", "ambiguous"] },
+        "code": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "message": { "type": "string", "maxLength": 256 }
       }
     },
     "session": {
@@ -113,17 +336,26 @@
       "additionalProperties": false,
       "required": [
         "type",
+        "machine_connection_epoch",
         "workspace_epoch",
         "session_id",
         "session_created",
+        "windows",
         "window",
         "panes"
       ],
       "properties": {
         "type": { "const": "workspace.projection" },
+        "machine_connection_epoch": { "$ref": "#/$defs/connectionEpoch" },
         "workspace_epoch": { "type": "string", "format": "uuid" },
         "session_id": { "$ref": "#/$defs/sessionId" },
         "session_created": { "type": "integer", "minimum": 1 },
+        "windows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/windowSummary" }
+        },
         "window": { "$ref": "#/$defs/window" },
         "panes": {
           "type": "array",
@@ -131,6 +363,16 @@
           "maxItems": 32,
           "items": { "$ref": "#/$defs/pane" }
         }
+      }
+    },
+    "windowSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window_id", "name", "active"],
+      "properties": {
+        "window_id": { "$ref": "#/$defs/windowId" },
+        "name": { "type": "string", "maxLength": 128 },
+        "active": { "type": "boolean" }
       }
     },
     "window": {
@@ -211,7 +453,14 @@
             "unauthenticated",
             "invalid_origin",
             "machine_unavailable",
+            "temporarily_unavailable",
+            "owner_unreachable",
             "stale_selection",
+            "stale_epoch",
+            "writer_required",
+            "writer_busy",
+            "operation_ambiguous",
+            "overloaded",
             "tmux_missing",
             "tmux_incompatible",
             "target_unavailable",
@@ -221,6 +470,8 @@
         "message": { "type": "string", "maxLength": 256 }
       }
     },
+    "requestId": { "type": "string", "format": "uuid" },
+    "connectionEpoch": { "type": "string", "pattern": "^[1-9][0-9]{0,18}$" },
     "sessionId": { "type": "string", "pattern": "^\\$[0-9]+$", "maxLength": 32 },
     "windowId": { "type": "string", "pattern": "^@[0-9]+$", "maxLength": 32 },
     "paneId": { "type": "string", "pattern": "^%[0-9]+$", "maxLength": 32 },
@@ -228,7 +479,12 @@
     "terminalBytes": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]*$",
-      "maxLength": 21848
+      "maxLength": 21846
+    },
+    "inputBytes": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "maxLength": 1366
     }
   }
 }

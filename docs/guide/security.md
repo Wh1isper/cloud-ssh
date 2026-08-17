@@ -1,8 +1,8 @@
 # Security
 
-## Current single-node implementation
+## Current implementation
 
-The current Server initializes PostgreSQL, registers a fenced incarnation, serves the protected API and Browser, manages generated encrypted SSH credentials and Machines, accepts Relay enrollment/tunnels, claims actual Machine owners, and opens constrained read-only SSH/tmux attachments. Terminal bytes and current projections remain owner-local and are not persisted. Writable Browser input and clustered internal owner WSS are not implemented.
+The current Server initializes PostgreSQL, registers a fenced incarnation, serves the protected API and Browser, manages generated encrypted SSH credentials and Machines, accepts Relay enrollment/tunnels, claims actual Machine owners, and opens constrained interactive SSH/tmux attachments with owner-local writer coordination. In the clustered profile, already authenticated Browser and Machine-affine invalidation ingress may use one fresh challenge-authenticated internal TLS/WSS hop to the owner. Terminal bytes, current projections, writer state, and internal connections remain owner-local and are not persisted.
 
 ## Deployment trust boundary
 
@@ -30,7 +30,7 @@ Key rotation drains/stops all nodes, waits for old leases to become invalid, rep
 
 ## Cluster trust and fencing
 
-Clustered mode uses one distinct canonical 32-byte `OWLMUX_CLUSTER_KEY` plus TLS on every internal connection. The destination first sends a fresh one-use challenge; ingress returns one domain-separated HMAC response binding that challenge, a source nonce, source/destination node incarnations, configuration epoch, Machine route revision/connection epoch, and connection class under a destination-local `CLOCK_BOOTTIME` deadline. No sender timestamp or reusable assertion exists. The key also creates a domain-separated configuration-consistency proof.
+Clustered mode uses one distinct canonical 32-byte `OWLMUX_CLUSTER_KEY` plus TLS on every internal connection. Startup validates each node's configured certificate/key against its configured CA roots and advertised hostname before membership registration. The destination first sends a fresh one-use challenge; ingress returns one domain-separated HMAC response binding that challenge, a source nonce, source/destination node incarnations, configuration epoch, Machine route revision/connection epoch, and connection class under a destination-local `CLOCK_BOOTTIME` deadline. No sender timestamp or reusable assertion exists. The key also creates a domain-separated configuration-consistency proof. Attachment and one-shot control connections have separate bounded inbound and outbound capacity, so legitimate long-lived attachments cannot consume the reserved invalidation path.
 
 The cluster key cannot authenticate public API/Browser, enrollment, Relay, SSH, or private-key encryption. A stored config proof or Deployment ID cannot authenticate a node. Raw API keys, enrollment tokens, Relay proof candidates, SSH keys, and encryption keys never cross internal owner WSS. One-shot API control uses the same WSS challenge mode, not internal HTTPS.
 
@@ -53,11 +53,13 @@ A compromised Server node or cluster key is a Deployment-wide incident. Isolate 
 
 ## Target trust and Browser writer coordination
 
-The current read-only workspace implements target observation only; the writer coordination described later in this section is accepted target design.
+The current single-node and clustered workspaces implement the writer coordination in this section. A remote ingress transports the same bounded attachment protocol to the owner; writer authority and target dispatch remain owner-local.
 
 Target tmux and sshd are authoritative. A compromised expected target can emit malicious terminal data or control its shell. Host verification prevents silent routing to a different host but does not make the expected host trustworthy.
 
-One owner-local pointer identifies the Browser attachment allowed to send OwlMux input, target resize, session creation, and the small typed mutation set for a Machine connection epoch/socket incarnation. Any API-key holder can explicitly take it over, so it is coordination UX rather than a privilege boundary. The owner atomically replaces the pointer and verifies the authenticated connection plus Machine/attachment epochs on every write; there is no writer TTL, renewal, generation, token, or distributed lock. Native tmux clients remain outside this coordination.
+One route-scoped owner-local pointer identifies the Browser attachment allowed to send OwlMux input, target resize, session creation, and the small typed mutation set for a Machine connection epoch/socket incarnation. Any API-key holder can explicitly take it over, so it is coordination UX rather than a privilege boundary. Every control client atomically attaches read-only with `ignore-size`. Claims and takeovers serialize through one owner-local dispatch barrier; takeover first makes the old client `ignore-size` and read-only, then uses tmux's dedicated read-only toggle to promote the claimant, clears `ignore-size`, installs the pointer and size, and freshly hydrates it. Every write rechecks the current route, authenticated connection, Machine/attachment/workspace epochs, and writer pointer immediately before and after target I/O; there is no writer TTL, renewal, generation, token, or distributed lock. Native tmux clients remain outside this coordination.
+
+Browser input is accepted only for the currently observed active pane, is bounded to 1024 bytes, uses canonical base64url on the attachment protocol, and becomes fixed-width hex arguments to `send-keys -H`; it never enters shell or tmux command grammar as raw text. Session creation uses the target's configured tmux default command rather than a Browser-provided startup command. Target mutations have exact-success, known-failure, or conservative-ambiguous outcomes. OwlMux never retries or automatically compensates an ambiguous mutation and instead clears writer authority and returns to fresh discovery.
 
 ## Credential separation
 
@@ -76,13 +78,13 @@ OpenSSH uses a dedicated Server-owned configuration, strict host inputs, exact M
 
 Child cleanup cannot remove siblings or another node's files. Each node scavenges only fully validated OwlMux-owned orphans from its own root. A hard crash can leave bounded plaintext until private mount/container teardown or that node's next startup.
 
-Credentials may be reused by multiple Machines. UI exposes reuse count because compromise scope follows all bindings. Initialization generates a default Ed25519 credential; the current API-key holder may generate, rename, reset, select a default, rotate by replacement, and retire an unreferenced non-default credential. OwlMux accepts no private-key upload, imported key, passphrase, or alternate algorithm, and never reveals/downloads stored private keys. Target administrators exclusively install/remove public keys; OwlMux/Relay never mutate authorization stores. The target complete lifecycle adds explicit active-Machine rebind for future SSH children without revoking an already authenticated child; that operation is not implemented in Blocks 0–3.
+Credentials may be reused by multiple Machines. UI exposes reuse count because compromise scope follows all bindings. Initialization generates a default Ed25519 credential; the API-key holder may generate, rename, reset, select a default, rotate by replacement, explicitly rebind an active Machine, and retire an unreferenced non-default credential. OwlMux accepts no private-key upload, imported key, passphrase, or alternate algorithm, and never reveals/downloads stored private keys. Target administrators exclusively install/remove public keys; OwlMux/Relay never mutate authorization stores. Active-Machine rebind changes only the credential selected for future SSH children, increments the independent credential revision, and does not revoke an already authenticated child or change the owner-fencing route revision.
 
 ## Database and backup compromise
 
 A disclosed database contains Machine/host/audit data, Relay public keys, node/owner coordination, metadata, and encrypted SSH credentials. It does not contain the API, cluster, or SSH encryption keys or terminal content. Database write compromise can corrupt product/owner authority and is a full Deployment integrity incident.
 
-PostgreSQL HA, backup, and restore are operator responsibilities. OwlMux assumes the configured endpoint exposes one linearizable single-writer non-rollback history and preserves acknowledged commits; it does not validate topology or repair rollback. Before an operator restore, stop/isolate all Server nodes and restart fresh incarnations. If history goes backward, lease, revocation, enrollment, epoch, and credential guarantees are unsupported. Backups and the separate SSH encryption key remain sensitive.
+PostgreSQL HA, backup, and restore are operator responsibilities. OwlMux assumes the configured endpoint exposes one linearizable single-writer non-rollback history and preserves acknowledged commits; it does not validate topology or repair rollback. Before an operator restore, stop/isolate all Server nodes and restart fresh incarnations. If history goes backward, lease, revocation, enrollment, epoch, and credential guarantees are unsupported. Backups and the separate SSH encryption key remain sensitive. Follow the executable evidence and cold restore boundary in [Recovery and incident response](recovery.md).
 
 ## Separate Deployments
 
@@ -92,7 +94,7 @@ A compromise remains Deployment-local only if operators do not reuse secrets or 
 
 ## Process continuity
 
-API-key replacement, node drain/fence, Machine owner loss, Machine disablement, Relay revocation, database failure, or infrastructure loss closes OwlMux access only. In the target complete lifecycle, credential rebind applies only to future SSH children. None of these actions kills target tmux.
+API-key replacement, node drain/fence, Machine owner loss, Machine disablement, Relay revocation, database failure, or infrastructure loss closes OwlMux access only. Credential rebind applies only to future SSH children. None of these actions kills target tmux.
 
 ## Reporting vulnerabilities
 

@@ -4,11 +4,21 @@ export const PUBLIC_CONTRACT_VERSION = "public.v1" as const;
 export const ATTACHMENT_CONTRACT_VERSION = "attachment.v1" as const;
 export const ATTACHMENT_MAX_FRAME_BYTES = 32768 as const;
 export const ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES = 16384 as const;
+export const ATTACHMENT_MAX_INPUT_BYTES = 1024 as const;
+export const ATTACHMENT_MAX_DIMENSION = 10000 as const;
+export const ATTACHMENT_MAX_GRID_CELLS = 2000000 as const;
+export const ATTACHMENT_MAX_PENDING_OPERATIONS = 32 as const;
+export const ATTACHMENT_MAX_PENDING_INPUT_BYTES = 8192 as const;
+export const ATTACHMENT_MAX_SOCKET_BUFFER_BYTES = 65536 as const;
 export const ATTACHMENT_MAX_PANES = 32 as const;
 export const ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES = 262144 as const;
 export const ATTACHMENT_MAX_PROJECTION_BYTES = 1048576 as const;
+export const ATTACHMENT_CLOSE_NORMAL = 1000 as const;
+export const ATTACHMENT_CLOSE_PROTOCOL_ERROR = 1002 as const;
+export const ATTACHMENT_CLOSE_POLICY_VIOLATION = 1008 as const;
+export const ATTACHMENT_CLOSE_TEMPORARILY_UNAVAILABLE = 1013 as const;
 export type ServiceStatus = "ok" | "ready" | "not_ready";
-export type ServiceStage = "foundation" | "single_node";
+export type ServiceStage = "foundation" | "single_node" | "clustered";
 export type ErrorCode =
   | "not_implemented"
   | "unauthenticated"
@@ -19,9 +29,12 @@ export type ErrorCode =
   | "invalid_host_identity"
   | "not_found"
   | "credential_in_use"
+  | "credential_limit"
+  | "machine_limit"
   | "invalid_lifecycle"
   | "conflict"
   | "temporarily_unavailable"
+  | "owner_unreachable"
   | "operation_ambiguous"
   | "internal_error";
 
@@ -41,6 +54,23 @@ export interface ErrorResponse {
   code: ErrorCode;
   message: string;
   retry_after?: number;
+}
+
+export interface AuditEventSummary {
+  action: string;
+  audit_event_id: string;
+  machine_id?: string;
+  occurred_at: string;
+  outcome_class: "success" | "rejected" | "ambiguous";
+  resource_kind:
+    | "deployment"
+    | "ssh_credential"
+    | "machine"
+    | "enrollment"
+    | "relay_binding"
+    | "machine_owner"
+    | "server_node";
+  ssh_credential_id?: string;
 }
 
 export interface CreateCredentialInput {
@@ -70,7 +100,7 @@ export interface DeploymentPresentation {
   config_epoch: number;
   default_ssh_credential_id: string;
   deployment_id: string;
-  profile: "single_node";
+  profile: "single_node" | "clustered";
   server_build_id: string;
 }
 
@@ -79,21 +109,36 @@ export interface EnrollmentTokenResponse {
   enrollment_token: string;
 }
 
+export interface MachineAliasInput {
+  alias: string;
+}
+
 export interface MachineCreated {
   enrollment_expires_in: number;
   enrollment_token: string;
   machine: MachineSummary;
 }
 
+export interface MachineCredentialInput {
+  ssh_credential_id: string;
+}
+
 export interface MachineSummary {
   alias: string;
-  host_identity: string;
   lifecycle: "pending" | "verifying" | "active" | "disabled";
   machine_id: string;
   reachability:
     "unknown" | "connecting" | "reachable" | "temporarily_unavailable" | "owner_unreachable";
   ssh_credential_id: string;
-  target_account: string;
-  tmux_path: string;
-  tmux_socket_identity: string;
+}
+
+export interface MetricsSnapshot {
+  api_authenticated_requests_total: number;
+  api_auth_rejections_total: number;
+  api_mutation_overloads_total: number;
+  node_ready: boolean;
+  owner_absent_resolutions_total: number;
+  owner_local_resolutions_total: number;
+  owner_remote_resolutions_total: number;
+  owner_resolution_failures_total: number;
 }

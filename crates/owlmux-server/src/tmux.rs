@@ -1,5 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
+    fmt::Write as _,
     time::Duration,
 };
 
@@ -9,6 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     generated::contracts::{
+        ATTACHMENT_MAX_DIMENSION, ATTACHMENT_MAX_GRID_CELLS, ATTACHMENT_MAX_INPUT_BYTES,
         ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES, ATTACHMENT_MAX_PANES, ATTACHMENT_MAX_PROJECTION_BYTES,
         ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES,
     },
@@ -18,13 +20,13 @@ use crate::{
 const PROBE_CLIENT_PREFIX: &str = "__OWLMUX_TMUX_CLIENT_V1__\t";
 const PROBE_SERVER_PREFIX: &str = "__OWLMUX_TMUX_SERVER_V1__\t";
 const MAX_SESSIONS: usize = 128;
+const MAX_WINDOWS: usize = 128;
 const MAX_RESPONSE_BYTES: usize = ATTACHMENT_MAX_PROJECTION_BYTES;
 const MAX_PANE_METADATA_BYTES: usize = 1024;
 const MAX_QUEUED_EVENTS: usize = 256;
 const MAX_QUEUED_OUTPUT_BYTES: usize = 512 * 1024;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_LAYOUT_BYTES: usize = 4096;
-const MAX_DIMENSION: u32 = 10_000;
 const MAX_HYDRATION_ATTEMPTS: usize = 3;
 const MAX_RESPONSE_RECORDS: usize = 16_384;
 const MAX_RESPONSE_WIRE_BYTES: usize = 8 * 1024 * 1024;
@@ -46,6 +48,13 @@ pub struct ProbeResult {
     pub tmux_server_version: Option<String>,
     pub selection_epoch: Uuid,
     pub sessions: Vec<SessionSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WindowSummary {
+    pub window_id: String,
+    pub name: String,
+    pub active: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -100,6 +109,7 @@ pub struct PaneSnapshot {
 }
 
 pub struct WorkspaceProjection {
+    pub windows: Vec<WindowSummary>,
     pub window: WindowProjection,
     pub panes: Vec<PaneProjection>,
     pub snapshots: Vec<PaneSnapshot>,
@@ -110,6 +120,13 @@ pub enum ControlEvent {
     Output { pane_id: String, data: Vec<u8> },
     Refresh,
     Exit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationOutcome {
+    Succeeded,
+    Failed,
+    Ambiguous,
 }
 
 pub struct ControlAdapter {
@@ -133,7 +150,7 @@ impl ControlAdapter {
         adapter.read_response().await?;
         adapter
             .command(
-                "refresh-client -f read-only,ignore-size,pause-after=1",
+                "refresh-client -f 'read-only,ignore-size,pause-after=1'",
                 MAX_RESPONSE_BYTES,
             )
             .await?;
@@ -193,26 +210,250 @@ impl ControlAdapter {
         }
     }
 
+    /// Apply the exact writer or observer control-client flags.
+    ///
+    pub async fn set_writer(&mut self, writer: bool) -> MutationOutcome {
+        if writer {
+            let outcome = self.mutating_command("switch-client -r").await;
+            if outcome != MutationOutcome::Succeeded {
+                return outcome;
+            }
+            self.mutating_command("refresh-client -f '!ignore-size,pause-after=1'")
+                .await
+        } else {
+            let outcome = self
+                .mutating_command("refresh-client -f 'ignore-size,pause-after=1'")
+                .await;
+            if outcome != MutationOutcome::Succeeded {
+                return outcome;
+            }
+            self.mutating_command("switch-client -r").await
+        }
+    }
+
+    /// Resize this writer control client within the supported dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either dimension is outside the supported range.
+    pub async fn resize(&mut self, columns: u32, rows: u32) -> Result<MutationOutcome, TmuxError> {
+        if !valid_grid(columns, rows) {
+            return Err(TmuxError::Protocol);
+        }
+        Ok(self
+            .mutating_command(&format!("refresh-client -C {columns}x{rows}"))
+            .await)
+    }
+
+    /// Send bounded literal bytes to one validated pane through hex arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the pane ID or input bytes violate the closed operation.
+    pub async fn send_literal(
+        &mut self,
+        pane_id: &str,
+        data: &[u8],
+    ) -> Result<MutationOutcome, TmuxError> {
+        let command = render_literal_input(pane_id, data)?;
+        Ok(self.mutating_command(&command).await)
+    }
+
+    /// Select one validated observed window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the window ID is outside the closed identifier grammar.
+    pub async fn select_window(&mut self, window_id: &str) -> Result<MutationOutcome, TmuxError> {
+        if !is_window_id(window_id) {
+            return Err(TmuxError::Protocol);
+        }
+        Ok(self
+            .mutating_command(&format!("select-window -t {window_id}"))
+            .await)
+    }
+
+    /// Select one validated observed pane.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the pane ID is outside the closed identifier grammar.
+    pub async fn select_pane(&mut self, pane_id: &str) -> Result<MutationOutcome, TmuxError> {
+        if !is_pane_id(pane_id) {
+            return Err(TmuxError::Protocol);
+        }
+        Ok(self
+            .mutating_command(&format!("select-pane -t {pane_id}"))
+            .await)
+    }
+
+    async fn mutating_command(&mut self, command: &str) -> MutationOutcome {
+        if self.control.send_command(command).await.is_err() {
+            return MutationOutcome::Ambiguous;
+        }
+        match self.read_response_with_limit(MAX_RESPONSE_BYTES).await {
+            Ok(_) => MutationOutcome::Succeeded,
+            Err(TmuxError::Target) => MutationOutcome::Failed,
+            Err(
+                TmuxError::Ssh(_)
+                | TmuxError::Protocol
+                | TmuxError::Deadline
+                | TmuxError::Changed
+                | TmuxError::ProjectionTooLarge
+                | TmuxError::TooManyPanes
+                | TmuxError::TooManySessions
+                | TmuxError::Incompatible,
+            ) => MutationOutcome::Ambiguous,
+        }
+    }
+
     async fn hydrate_once(
         &mut self,
         session_id: &str,
         session_created: i64,
     ) -> Result<WorkspaceProjection, TmuxError> {
-        let window = self.observe_window(session_id, session_created).await?;
-        let mut panes = self.observe_panes(&window).await?;
-        self.observe_pane_labels(&mut panes).await?;
-        self.pause_panes(&panes).await?;
-        self.require_stable_cutover()?;
-        self.continue_panes(&panes).await?;
-        let snapshots = self.capture_panes(&window, &mut panes).await?;
+        let windows = self
+            .observe_windows(session_id)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    stage = "observe_windows",
+                    ?error,
+                    "tmux projection hydration failed"
+                );
+            })?;
+        let window = self
+            .observe_window(session_id, session_created)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    stage = "observe_window",
+                    ?error,
+                    "tmux projection hydration failed"
+                );
+            })?;
+        if windows
+            .iter()
+            .find(|candidate| candidate.active)
+            .is_none_or(|active| active.window_id != window.window_id)
+        {
+            return Err(TmuxError::Changed);
+        }
+        let mut panes = self.observe_panes(&window).await.inspect_err(|error| {
+            tracing::warn!(
+                stage = "observe_panes",
+                ?error,
+                "tmux projection hydration failed"
+            );
+        })?;
+        self.observe_pane_labels(&mut panes)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    stage = "observe_pane_labels",
+                    ?error,
+                    "tmux projection hydration failed"
+                );
+            })?;
+        self.pause_panes(&panes).await.inspect_err(|error| {
+            tracing::warn!(
+                stage = "pause_panes",
+                ?error,
+                "tmux projection hydration failed"
+            );
+        })?;
+        self.require_stable_cutover().inspect_err(|error| {
+            tracing::debug!(
+                stage = "stable_cutover",
+                ?error,
+                "tmux projection hydration retry"
+            );
+        })?;
+        self.continue_panes(&panes).await.inspect_err(|error| {
+            tracing::warn!(
+                stage = "continue_panes",
+                ?error,
+                "tmux projection hydration failed"
+            );
+        })?;
+        let snapshots = self
+            .capture_panes(&window, &mut panes)
+            .await
+            .inspect_err(|error| {
+                tracing::warn!(
+                    stage = "capture_panes",
+                    ?error,
+                    "tmux projection hydration failed"
+                );
+            })?;
         self.revalidate_projection(session_id, session_created, &window, &panes)
-            .await?;
-        self.require_live_cutover()?;
+            .await
+            .inspect_err(|error| {
+                tracing::debug!(
+                    stage = "revalidate_projection",
+                    ?error,
+                    "tmux projection hydration retry"
+                );
+            })?;
+        self.require_live_cutover().inspect_err(|error| {
+            tracing::debug!(
+                stage = "live_cutover",
+                ?error,
+                "tmux projection hydration retry"
+            );
+        })?;
         Ok(WorkspaceProjection {
+            windows,
             window,
             panes,
             snapshots,
         })
+    }
+
+    async fn observe_windows(&mut self, session_id: &str) -> Result<Vec<WindowSummary>, TmuxError> {
+        if !is_session_id(session_id) {
+            return Err(TmuxError::Protocol);
+        }
+        let rows = self
+            .command(
+                &format!(
+                    "list-windows -t {session_id} -F '#{{window_id}}:#{{window_active}}:#{{window_name}}'"
+                ),
+                MAX_RESPONSE_BYTES,
+            )
+            .await?;
+        if rows.is_empty() || rows.len() > MAX_WINDOWS {
+            return Err(TmuxError::Protocol);
+        }
+        let mut windows = Vec::with_capacity(rows.len());
+        let mut identities = HashSet::new();
+        for row in rows {
+            let row = std::str::from_utf8(&row).map_err(|_| TmuxError::Protocol)?;
+            let mut fields = row.splitn(3, ':');
+            let window_id = fields.next().ok_or(TmuxError::Protocol)?;
+            let active = match fields.next().ok_or(TmuxError::Protocol)? {
+                "0" => false,
+                "1" => true,
+                _ => return Err(TmuxError::Protocol),
+            };
+            let name = fields.next().ok_or(TmuxError::Protocol)?;
+            if !is_window_id(window_id)
+                || !identities.insert(window_id.to_owned())
+                || name.len() > 128
+                || name.chars().any(char::is_control)
+            {
+                return Err(TmuxError::Protocol);
+            }
+            windows.push(WindowSummary {
+                window_id: window_id.to_owned(),
+                name: name.to_owned(),
+                active,
+            });
+        }
+        if windows.iter().filter(|window| window.active).count() != 1 {
+            return Err(TmuxError::Protocol);
+        }
+        Ok(windows)
     }
 
     async fn observe_window(
@@ -238,6 +479,9 @@ impl ControlAdapter {
         let width = parse_dimension(fields.next().ok_or(TmuxError::Protocol)?)?;
         let height = parse_dimension(fields.next().ok_or(TmuxError::Protocol)?)?;
         let layout = fields.next().ok_or(TmuxError::Protocol)?;
+        if !valid_grid(width, height) {
+            return Err(TmuxError::ProjectionTooLarge);
+        }
         if observed_session != session_id
             || observed_created != session_created
             || !is_window_id(window_id)
@@ -391,8 +635,14 @@ impl ControlAdapter {
         expected_window: &WindowProjection,
         expected_panes: &[PaneProjection],
     ) -> Result<(), TmuxError> {
+        let windows = self.observe_windows(session_id).await?;
         let window = self.observe_window(session_id, session_created).await?;
-        if window != *expected_window {
+        if window != *expected_window
+            || windows
+                .iter()
+                .find(|candidate| candidate.active)
+                .is_none_or(|active| active.window_id != window.window_id)
+        {
             return Err(TmuxError::Changed);
         }
         let panes = self.observe_panes(&window).await?;
@@ -690,6 +940,12 @@ fn parse_pane_rows(
     if panes.iter().filter(|pane| pane.active).count() != 1 {
         return Err(TmuxError::Protocol);
     }
+    let total_cells = panes.iter().try_fold(0_u64, |total, pane| {
+        total.checked_add(u64::from(pane.width) * u64::from(pane.height))
+    });
+    if total_cells.is_none_or(|cells| cells > ATTACHMENT_MAX_GRID_CELLS) {
+        return Err(TmuxError::ProjectionTooLarge);
+    }
     Ok(panes)
 }
 
@@ -700,8 +956,11 @@ fn parse_pane_row(row: &[u8], window: &WindowProjection) -> Result<PaneProjectio
         return Err(TmuxError::Protocol);
     }
     let pane_id = fields[0];
-    if !is_pane_id(pane_id) || fields[1] != window.window_id {
+    if !is_pane_id(pane_id) {
         return Err(TmuxError::Protocol);
+    }
+    if fields[1] != window.window_id {
+        return Err(TmuxError::Changed);
     }
     let active = match fields[2] {
         "0" => false,
@@ -717,7 +976,7 @@ fn parse_pane_row(row: &[u8], window: &WindowProjection) -> Result<PaneProjectio
         || left.saturating_add(width) > window.width
         || top.saturating_add(height) > window.height
     {
-        return Err(TmuxError::Protocol);
+        return Err(TmuxError::Changed);
     }
     let terminal = PaneTerminalState {
         cursor_x: parse_coordinate_with_bound(fields[7], width)?,
@@ -931,8 +1190,10 @@ fn is_refresh_notification(line: &[u8]) -> bool {
 }
 
 fn is_ignorable_notification(line: &[u8]) -> bool {
-    line.starts_with(b"%client-detached ")
+    line.starts_with(b"%client-active ")
+        || line.starts_with(b"%client-detached ")
         || line.starts_with(b"%client-session-changed ")
+        || line.starts_with(b"%client-window-changed ")
         || line.starts_with(b"%message ")
         || line.starts_with(b"%paste-buffer-changed ")
         || line.starts_with(b"%paste-buffer-deleted ")
@@ -1048,7 +1309,7 @@ fn parse_count(value: &str) -> Result<u32, TmuxError> {
 
 fn parse_dimension(value: &str) -> Result<u32, TmuxError> {
     let value = value.parse::<u32>().map_err(|_| TmuxError::Protocol)?;
-    if value == 0 || value > MAX_DIMENSION {
+    if value == 0 || value > ATTACHMENT_MAX_DIMENSION {
         return Err(TmuxError::Protocol);
     }
     Ok(value)
@@ -1056,10 +1317,18 @@ fn parse_dimension(value: &str) -> Result<u32, TmuxError> {
 
 fn parse_coordinate(value: &str) -> Result<u32, TmuxError> {
     let value = value.parse::<u32>().map_err(|_| TmuxError::Protocol)?;
-    if value >= MAX_DIMENSION {
+    if value >= ATTACHMENT_MAX_DIMENSION {
         return Err(TmuxError::Protocol);
     }
     Ok(value)
+}
+
+fn valid_grid(width: u32, height: u32) -> bool {
+    width > 0
+        && width <= ATTACHMENT_MAX_DIMENSION
+        && height > 0
+        && height <= ATTACHMENT_MAX_DIMENSION
+        && u64::from(width) * u64::from(height) <= ATTACHMENT_MAX_GRID_CELLS
 }
 
 fn parse_coordinate_with_bound(value: &str, exclusive_bound: u32) -> Result<u32, TmuxError> {
@@ -1083,6 +1352,17 @@ fn parse_modes(values: &[&str]) -> Result<u8, TmuxError> {
         }
     }
     Ok(modes)
+}
+
+fn render_literal_input(pane_id: &str, data: &[u8]) -> Result<String, TmuxError> {
+    if !is_pane_id(pane_id) || data.is_empty() || data.len() > ATTACHMENT_MAX_INPUT_BYTES {
+        return Err(TmuxError::Protocol);
+    }
+    let mut command = format!("send-keys -t {pane_id} -H");
+    for byte in data {
+        write!(&mut command, " {byte:02x}").map_err(|_| TmuxError::Protocol)?;
+    }
+    Ok(command)
 }
 
 fn is_session_id(value: &str) -> bool {
@@ -1284,6 +1564,53 @@ mod tests {
         assert!(!bootstrap.windows(5).any(|window| window == b"def\r\n"));
         assert!(bootstrap.windows(6).any(|window| window == b"\x1b[2;3H"));
         assert!(bootstrap.ends_with(b"\x1b[?25h"));
+    }
+
+    #[test]
+    fn pane_geometry_crossing_a_resize_is_retryable_change() {
+        let old_window = WindowProjection {
+            window_id: "@1".to_owned(),
+            name: "main".to_owned(),
+            width: 80,
+            height: 24,
+            layout: "old".to_owned(),
+        };
+        let resized_pane = b"%1:@1:1:100:30:0:0:0:0:0:1:0:0:0:0:1:0:29";
+        assert!(matches!(
+            parse_pane_row(resized_pane, &old_window),
+            Err(TmuxError::Changed)
+        ));
+
+        let different_window = b"%1:@2:1:80:24:0:0:0:0:0:1:0:0:0:0:1:0:23";
+        assert!(matches!(
+            parse_pane_row(different_window, &old_window),
+            Err(TmuxError::Changed)
+        ));
+        let malformed_id = b"bad:@1:1:80:24:0:0:0:0:0:1:0:0:0:0:1:0:23";
+        assert!(matches!(
+            parse_pane_row(malformed_id, &old_window),
+            Err(TmuxError::Protocol)
+        ));
+    }
+
+    #[test]
+    fn qualified_client_notifications_remain_closed() {
+        assert!(is_ignorable_notification(b"%client-active client-1"));
+        assert!(is_ignorable_notification(
+            b"%client-window-changed client-1 @2"
+        ));
+        assert!(!is_ignorable_notification(b"%client-unknown client-1"));
+    }
+
+    #[test]
+    fn pane_input_is_rendered_only_as_bounded_hex_bytes() {
+        assert_eq!(
+            render_literal_input("%7", b"a\n\0\xff").expect("literal input"),
+            "send-keys -t %7 -H 61 0a 00 ff"
+        );
+        assert!(render_literal_input("%7;run-shell", b"safe").is_err());
+        assert!(render_literal_input("%7", b"").is_err());
+        assert!(render_literal_input("%7", &vec![0; ATTACHMENT_MAX_INPUT_BYTES + 1]).is_err());
     }
 
     #[test]

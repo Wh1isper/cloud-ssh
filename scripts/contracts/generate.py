@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_ROOT = ROOT / "contracts" / "public" / "v1"
 RELAY_ROOT = ROOT / "contracts" / "relay" / "v1"
 ATTACHMENT_ROOT = ROOT / "contracts" / "attachment" / "v1"
+INTERNAL_ROOT = ROOT / "contracts" / "internal" / "v1"
 RUST_OUTPUT = ROOT / "crates" / "owlmux-server" / "src" / "generated" / "contracts.rs"
 TS_OUTPUT = ROOT / "apps" / "web" / "src" / "generated" / "contracts.ts"
 
@@ -25,6 +26,10 @@ def quoted(values: list[str]) -> str:
 
 def rust_int(value: int) -> str:
     return f"{value:_}"
+
+
+def rust_string(value: str) -> str:
+    return json.dumps(value).replace(r"\u0000", r"\0")
 
 
 def ts_type(schema: dict[str, Any]) -> str:
@@ -67,6 +72,8 @@ def render_rust(
     control: dict[str, Any],
     relay_manifest: dict[str, Any],
     attachment_manifest: dict[str, Any],
+    internal_manifest: dict[str, Any],
+    configuration_proof: dict[str, Any],
 ) -> str:
     status_values = status["properties"]["status"]["enum"]
     error_values = error["properties"]["code"]["enum"]
@@ -80,9 +87,29 @@ pub const RELAY_MAX_STREAMS: usize = {relay_manifest["max_streams"]};
 pub const ATTACHMENT_CONTRACT_VERSION: &str = {json.dumps(attachment_manifest["version"])};
 pub const ATTACHMENT_MAX_FRAME_BYTES: usize = {rust_int(attachment_manifest["max_frame_bytes"])};
 pub const ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES: usize = {rust_int(attachment_manifest["max_terminal_chunk_bytes"])};
+pub const ATTACHMENT_MAX_INPUT_BYTES: usize = {rust_int(attachment_manifest["max_input_bytes"])};
+pub const ATTACHMENT_MAX_DIMENSION: u32 = {rust_int(attachment_manifest["max_dimension"])};
+pub const ATTACHMENT_MAX_GRID_CELLS: u64 = {rust_int(attachment_manifest["max_grid_cells"])};
 pub const ATTACHMENT_MAX_PANES: usize = {rust_int(attachment_manifest["max_panes"])};
 pub const ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES: usize = {rust_int(attachment_manifest["max_pane_snapshot_bytes"])};
-pub const ATTACHMENT_MAX_PROJECTION_BYTES: usize = {rust_int(attachment_manifest["max_projection_bytes"])};\n'''
+pub const ATTACHMENT_MAX_PROJECTION_BYTES: usize = {rust_int(attachment_manifest["max_projection_bytes"])};
+pub const ATTACHMENT_CLOSE_NORMAL: u16 = {attachment_manifest["close_codes"]["normal"]};
+pub const ATTACHMENT_CLOSE_PROTOCOL_ERROR: u16 = {attachment_manifest["close_codes"]["protocol_error"]};
+pub const ATTACHMENT_CLOSE_POLICY_VIOLATION: u16 = {attachment_manifest["close_codes"]["policy_violation"]};
+pub const ATTACHMENT_CLOSE_TEMPORARILY_UNAVAILABLE: u16 = {attachment_manifest["close_codes"]["temporarily_unavailable"]};
+pub const INTERNAL_CONTRACT_VERSION: &str = {json.dumps(internal_manifest["version"])};
+pub const INTERNAL_CONFIGURATION_VERSION: &str = {json.dumps(configuration_proof["version"])};
+pub const INTERNAL_CONFIGURATION_DOMAIN: &str = {rust_string(configuration_proof["domain"])};
+pub const INTERNAL_AUTH_TIMEOUT_SECONDS: u64 = {internal_manifest["auth_timeout_seconds"]};
+pub const INTERNAL_DIAL_TIMEOUT_SECONDS: u64 = {internal_manifest["dial_timeout_seconds"]};
+pub const INTERNAL_WRITE_TIMEOUT_SECONDS: u64 = {internal_manifest["write_timeout_seconds"]};
+pub const INTERNAL_MAX_FRAME_BYTES: usize = {rust_int(internal_manifest["max_frame_bytes"])};
+pub const INTERNAL_MAX_CONNECTIONS: usize = {rust_int(internal_manifest["max_connections"])};
+pub const INTERNAL_MAX_CONTROL_CONNECTIONS: usize = {rust_int(internal_manifest["max_control_connections"])};
+pub const INTERNAL_CLOSE_NORMAL: u16 = {internal_manifest["close_codes"]["normal"]};
+pub const INTERNAL_CLOSE_PROTOCOL_ERROR: u16 = {internal_manifest["close_codes"]["protocol_error"]};
+pub const INTERNAL_CLOSE_POLICY_VIOLATION: u16 = {internal_manifest["close_codes"]["policy_violation"]};
+pub const INTERNAL_CLOSE_TEMPORARILY_UNAVAILABLE: u16 = {internal_manifest["close_codes"]["temporarily_unavailable"]};\n'''
 
 
 def render_typescript(
@@ -102,9 +129,19 @@ def render_typescript(
 export const ATTACHMENT_CONTRACT_VERSION = {json.dumps(attachment_manifest['version'])} as const;
 export const ATTACHMENT_MAX_FRAME_BYTES = {attachment_manifest['max_frame_bytes']} as const;
 export const ATTACHMENT_MAX_TERMINAL_CHUNK_BYTES = {attachment_manifest['max_terminal_chunk_bytes']} as const;
+export const ATTACHMENT_MAX_INPUT_BYTES = {attachment_manifest['max_input_bytes']} as const;
+export const ATTACHMENT_MAX_DIMENSION = {attachment_manifest['max_dimension']} as const;
+export const ATTACHMENT_MAX_GRID_CELLS = {attachment_manifest['max_grid_cells']} as const;
+export const ATTACHMENT_MAX_PENDING_OPERATIONS = {attachment_manifest['max_pending_operations']} as const;
+export const ATTACHMENT_MAX_PENDING_INPUT_BYTES = {attachment_manifest['max_pending_input_bytes']} as const;
+export const ATTACHMENT_MAX_SOCKET_BUFFER_BYTES = {attachment_manifest['max_socket_buffer_bytes']} as const;
 export const ATTACHMENT_MAX_PANES = {attachment_manifest['max_panes']} as const;
 export const ATTACHMENT_MAX_PANE_SNAPSHOT_BYTES = {attachment_manifest['max_pane_snapshot_bytes']} as const;
-export const ATTACHMENT_MAX_PROJECTION_BYTES = {attachment_manifest['max_projection_bytes']} as const;\nexport type ServiceStatus = {status_union};\nexport type ServiceStage = {stage_union};\nexport type ErrorCode = {error_union};\n\nexport interface BuildMetadata {{\n  id: string;\n  version: string;\n}}\n\nexport interface StatusResponse {{\n  service: "owlmux-server";\n  stage: ServiceStage;\n  status: ServiceStatus;\n  build: BuildMetadata;\n}}\n\nexport interface ErrorResponse {{\n  code: ErrorCode;\n  message: string;\n  retry_after?: number;\n}}\n\n{render_interfaces(control)}\n'''
+export const ATTACHMENT_MAX_PROJECTION_BYTES = {attachment_manifest['max_projection_bytes']} as const;
+export const ATTACHMENT_CLOSE_NORMAL = {attachment_manifest['close_codes']['normal']} as const;
+export const ATTACHMENT_CLOSE_PROTOCOL_ERROR = {attachment_manifest['close_codes']['protocol_error']} as const;
+export const ATTACHMENT_CLOSE_POLICY_VIOLATION = {attachment_manifest['close_codes']['policy_violation']} as const;
+export const ATTACHMENT_CLOSE_TEMPORARILY_UNAVAILABLE = {attachment_manifest['close_codes']['temporarily_unavailable']} as const;\nexport type ServiceStatus = {status_union};\nexport type ServiceStage = {stage_union};\nexport type ErrorCode = {error_union};\n\nexport interface BuildMetadata {{\n  id: string;\n  version: string;\n}}\n\nexport interface StatusResponse {{\n  service: "owlmux-server";\n  stage: ServiceStage;\n  status: ServiceStatus;\n  build: BuildMetadata;\n}}\n\nexport interface ErrorResponse {{\n  code: ErrorCode;\n  message: string;\n  retry_after?: number;\n}}\n\n{render_interfaces(control)}\n'''
 
 
 def format_rust(content: str) -> str:
@@ -156,6 +193,9 @@ def main() -> int:
     relay_schema = load_json("relay.schema.json", RELAY_ROOT)
     attachment_manifest = load_json("manifest.json", ATTACHMENT_ROOT)
     attachment_schema = load_json("attachment.schema.json", ATTACHMENT_ROOT)
+    internal_manifest = load_json("manifest.json", INTERNAL_ROOT)
+    internal_schema = load_json("owner.schema.json", INTERNAL_ROOT)
+    configuration_proof = load_json("configuration-proof.json", INTERNAL_ROOT)
     if manifest.get("version") != "public.v1":
         raise ValueError("unsupported public contract version")
     if status.get("additionalProperties") is not False or error.get("additionalProperties") is not False:
@@ -170,12 +210,62 @@ def main() -> int:
         raise ValueError("unsupported attachment contract version")
     if attachment_manifest.get("schemas") != ["attachment.schema.json"] or "$defs" not in attachment_schema:
         raise ValueError("attachment contract manifest is incomplete")
+    if attachment_manifest.get("max_input_bytes") != 1024:
+        raise ValueError("attachment input bound is unsupported")
+    dimension = attachment_schema["$defs"].get("dimension", {})
+    if (
+        dimension.get("minimum") != 1
+        or dimension.get("maximum") != attachment_manifest.get("max_dimension")
+    ):
+        raise ValueError("attachment dimension bound does not match its schema")
+    if not 0 < attachment_manifest.get("max_grid_cells", 0) <= 4_000_000:
+        raise ValueError("attachment grid-cell bound is unsupported")
+    if not 0 < attachment_manifest.get("max_pending_operations", 0) <= 64:
+        raise ValueError("attachment pending-operation bound is unsupported")
+    if not 0 < attachment_manifest.get("max_pending_input_bytes", 0) <= 65_536:
+        raise ValueError("attachment pending-input bound is unsupported")
+    if not 0 < attachment_manifest.get("max_socket_buffer_bytes", 0) <= 1_048_576:
+        raise ValueError("attachment socket-buffer bound is unsupported")
+    if internal_manifest.get("version") != "owner.v1":
+        raise ValueError("unsupported internal contract version")
+    if internal_manifest.get("schemas") != ["owner.schema.json"] or "$defs" not in internal_schema:
+        raise ValueError("internal contract manifest is incomplete")
+    if internal_manifest.get("configuration_proof") != "configuration-proof.json":
+        raise ValueError("internal configuration proof artifact is missing")
+    if configuration_proof.get("version") != "configuration.v1" or configuration_proof.get("algorithm") != "HMAC-SHA-256":
+        raise ValueError("unsupported internal configuration proof")
+    if configuration_proof.get("domain") != "owlmux:cluster-configuration:v1\0":
+        raise ValueError("internal configuration proof domain is unsupported")
+    if len(configuration_proof.get("fields", [])) != 15:
+        raise ValueError("internal configuration proof fields are incomplete")
+    if not 0 < internal_manifest.get("max_frame_bytes", 0) <= 65_536:
+        raise ValueError("internal frame bound is unsupported")
+    if not 0 < internal_manifest.get("max_connections", 0) <= 1024:
+        raise ValueError("internal connection bound is unsupported")
+    if not 0 < internal_manifest.get("max_control_connections", 0) <= 64:
+        raise ValueError("internal control-connection bound is unsupported")
+    if attachment_manifest.get("close_codes") != {
+        "normal": 1000,
+        "protocol_error": 1002,
+        "policy_violation": 1008,
+        "temporarily_unavailable": 1013,
+    }:
+        raise ValueError("attachment close-code registry is unsupported")
     for root in (RELAY_ROOT, ATTACHMENT_ROOT):
         for fixture in (root / "fixtures").glob("*.json"):
             json.loads(fixture.read_text(encoding="utf-8"))
 
     rust = format_rust(
-        render_rust(manifest, status, error, control, relay_manifest, attachment_manifest)
+        render_rust(
+            manifest,
+            status,
+            error,
+            control,
+            relay_manifest,
+            attachment_manifest,
+            internal_manifest,
+            configuration_proof,
+        )
     )
     ok = update(RUST_OUTPUT, rust, args.check)
     typescript = format_typescript(

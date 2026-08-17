@@ -37,7 +37,7 @@ Server node, Relay, PostgreSQL, browser, or network failure
 - Do not add a Gateway/Worker split, scheduler/rebalance service, virtual-bucket coordinator, Redis, message queue, terminal broker, distributed writer lock, PostgreSQL HA orchestrator, or live-state migration layer.
 - Separate Deployments remain mutually independent trust domains. Each has its own origin, identity, all secrets, PostgreSQL, membership/owner registry, credentials, Machines, Relays, and live state; OwlMux provides no cross-Deployment global view, routing, migration, failover, or continuity.
 
-The current repository implements Blocks 0–3 in the single-node profile: Deployment/API-key and credential custody, pending Machine control, Relay enrollment/tunnel/actual ownership, and read-only SSH/tmux attachment. Do not describe writable terminal interaction, remote-owner/internal-WSS routing, or clustered operation as implemented.
+The current repository implements and qualifies the pre-release single-node and clustered profiles: Deployment/API-key and credential custody, complete Machine/Relay lifecycle control, active-Machine credential rebind for future SSH children, Relay enrollment/tunnel/actual ownership, read-only and writable SSH/tmux projection, owner-local Browser writer coordination, symmetric clustered remote-owner/internal-WSS routing, safe audit/metrics, repeatable recovery evidence, the documented Linux/tmux/login-shell matrix, and the production Server image. Publication remains tag-driven and CI-owned, and no production-supported version has been released; do not extend the qualification claim beyond the documented profiles.
 
 ## Deployment access
 
