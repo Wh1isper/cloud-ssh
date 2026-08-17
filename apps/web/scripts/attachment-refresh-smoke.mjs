@@ -3,7 +3,10 @@ import WebSocket from "ws";
 const server = process.env.OWLMUX_E2E_SERVER;
 const machineId = process.env.OWLMUX_E2E_MACHINE_ID;
 const apiKey = process.env.OWLMUX_E2E_API_KEY;
-if (!server || !machineId || !apiKey) throw new Error("missing attachment refresh configuration");
+const sessionName = process.env.OWLMUX_E2E_SESSION_NAME;
+if (!server || !machineId || !apiKey || !sessionName) {
+  throw new Error("missing attachment refresh configuration");
+}
 
 const origin = server.replace(/^ws/, "http");
 const socket = new WebSocket(`${server}/attachment/v1/machines/${machineId}`, { origin });
@@ -32,8 +35,8 @@ socket.on("message", (bytes) => {
   const frame = JSON.parse(bytes.toString());
   if (frame.type === "session.list") {
     if (!initialReady) {
-      assert(frame.sessions.length > 0, "initial chooser has no session");
-      const session = frame.sessions[0];
+      const session = frame.sessions.find((candidate) => candidate.name === sessionName);
+      assert(session !== undefined, "dedicated refresh session is missing");
       socket.send(
         JSON.stringify({
           type: "session.select",

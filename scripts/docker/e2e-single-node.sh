@@ -323,10 +323,18 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 python3 -c 'import json,sys; m=json.load(sys.stdin); assert m["lifecycle"] == "active" and m["reachability"] == "reachable"' <<<"$machine"
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux has-session -t alpha
+refresh_session=owlmux-refresh
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux new-session -d -s "$refresh_session" \
+  'printf "refresh-primary-ready"; while :; do sleep 3600; done'
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux split-window -d -t "$refresh_session:0" \
+  'printf "refresh-secondary-ready"; while :; do sleep 3600; done'
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux select-layout -t "$refresh_session:0" even-horizontal
 
 OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
 OWLMUX_E2E_API_KEY="$API_KEY" \
+OWLMUX_E2E_SESSION_NAME="$refresh_session" \
 pnpm --filter @owlmux/web exec node scripts/attachment-refresh-smoke.mjs >"$TMP/refresh.log" 2>&1 &
 ROUTE_TEST_PID=$!
 for _ in $(seq 1 100); do
@@ -371,7 +379,7 @@ python3 -c 'import json,sys; events=json.load(sys.stdin); actions={event["action
 metrics=$(curl --fail --silent --show-error --max-time 5 \
   -H "Authorization: Bearer $API_KEY" http://127.0.0.1:18080/api/v1/metrics)
 python3 -c 'import json,sys; metrics=json.load(sys.stdin); assert metrics["node_ready"] is True and metrics["api_authenticated_requests_total"] > 0; assert all(isinstance(value, (bool,int)) for value in metrics.values())' <<<"$metrics"
-"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux split-window -d -t alpha:0 \
+"${COMPOSE[@]}" exec -T --user owlmux target /usr/bin/tmux -L owlmux split-window -d -t "$refresh_session:0" \
   "printf 'tertiary-ready'; while :; do sleep 3600; done"
 for _ in $(seq 1 100); do
   grep -q '^projection-refreshed$' "$TMP/refresh.log" 2>/dev/null && break
