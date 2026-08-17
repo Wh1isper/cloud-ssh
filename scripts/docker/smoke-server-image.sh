@@ -64,8 +64,21 @@ docker run --rm --entrypoint /bin/sh "$image" -eu -c '
 '
 
 cleanup() {
+  status=$?
+  trap - EXIT
+  if ((status != 0)); then
+    if docker inspect "$name" >/dev/null 2>&1; then
+      echo "--- OwlMux Server logs ---" >&2
+      docker logs "$name" >&2 || true
+    fi
+    if docker inspect "$postgres_name" >/dev/null 2>&1; then
+      echo "--- PostgreSQL logs ---" >&2
+      docker logs "$postgres_name" >&2 || true
+    fi
+  fi
   docker rm --force "$name" "$postgres_name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -92,21 +105,29 @@ docker run --detach --name "$name" --network "$network" --publish 127.0.0.1::808
   --env OWLMUX_CONFIG_EPOCH=1 \
   --env OWLMUX_NODE_NAME=image-smoke \
   "$image" >/dev/null
-port="$(docker port "$name" 8080/tcp | sed -n 's/.*://p' | head -n 1)"
+port="$(docker port "$name" 8080/tcp | sed -n '1{s/.*://;p;}')"
 [[ -n "$port" ]]
 
+ready=false
 for _ in {1..30}; do
-  if curl --fail --silent "http://127.0.0.1:${port}/health" | grep -q '"status":"ok"'; then
+  ready_response="$(curl --fail --silent "http://127.0.0.1:${port}/ready" 2>/dev/null || true)"
+  if grep -q '"status":"ready"' <<<"$ready_response"; then
+    ready=true
     break
   fi
   sleep 1
 done
+[[ "$ready" == true ]]
 
-curl --fail --silent "http://127.0.0.1:${port}/health" | grep -q '"service":"owlmux-server"'
-curl --fail --silent "http://127.0.0.1:${port}/ready" | grep -q '"status":"ready"'
-curl --fail --silent "http://127.0.0.1:${port}/" | grep -q 'OwlMux'
-curl --fail --silent \
-  --header 'Authorization: Bearer owlmux_sk_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE' \
-  "http://127.0.0.1:${port}/api/v1/deployment" | grep -Fq "+${image_revision}\""
+health_response="$(curl --fail --silent "http://127.0.0.1:${port}/health")"
+grep -q '"service":"owlmux-server"' <<<"$health_response"
+root_response="$(curl --fail --silent "http://127.0.0.1:${port}/")"
+grep -q 'OwlMux' <<<"$root_response"
+deployment_response="$(
+  curl --fail --silent \
+    --header 'Authorization: Bearer owlmux_sk_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE' \
+    "http://127.0.0.1:${port}/api/v1/deployment"
+)"
+grep -Fq "+${image_revision}\"" <<<"$deployment_response"
 status="$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/api/v1/machines")"
 [[ "$status" == "401" ]]
