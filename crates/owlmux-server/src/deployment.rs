@@ -81,10 +81,10 @@ impl NodeLease {
         if self.fenced.load(Ordering::Acquire) {
             return Err(LeaseError::Fenced);
         }
-        let Ok(now) = self.clock.now() else {
-            warn!(incarnation_id = %self.incarnation_id, "node lease clock read failed; hard-fencing node");
-            return Err(self.fence());
-        };
+        let now = self.clock.now().map_err(|error| {
+            warn!(%error, incarnation_id = %self.incarnation_id, "node lease clock validation failed; hard-fencing node");
+            self.fence()
+        })?;
         let deadline = self.hard_deadline_ns.load(Ordering::Acquire);
         if deadline == 0 || duration_ns(now) >= deadline {
             warn!(incarnation_id = %self.incarnation_id, "node lease local hard deadline expired; hard-fencing node");
