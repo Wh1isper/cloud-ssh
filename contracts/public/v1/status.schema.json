@@ -1,0 +1,22 @@
+{
+  "$id": "https://owlmux.dev/contracts/public/v1/status.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "build": {
+      "additionalProperties": false,
+      "properties": {
+        "id": { "maxLength": 128, "minLength": 1, "type": "string" },
+        "version": { "maxLength": 64, "minLength": 1, "type": "string" }
+      },
+      "required": ["id", "version"],
+      "type": "object"
+    },
+    "service": { "const": "owlmux-server" },
+    "stage": { "enum": ["foundation", "single_node"] },
+    "status": { "enum": ["ok", "ready", "not_ready"] }
+  },
+  "required": ["service", "stage", "status", "build"],
+  "title": "OwlMux public status v1",
+  "type": "object"
+}

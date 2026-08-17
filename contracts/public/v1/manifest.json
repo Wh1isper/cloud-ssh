@@ -1,0 +1,14 @@
+{
+  "close_codes": {},
+  "errors": {
+    "conflict": 409,
+    "internal_error": 500,
+    "not_found": 404,
+    "not_implemented": 404,
+    "operation_ambiguous": 503,
+    "temporarily_unavailable": 503,
+    "unauthenticated": 401
+  },
+  "schemas": ["control.schema.json", "error.schema.json", "status.schema.json"],
+  "version": "public.v1"
+}

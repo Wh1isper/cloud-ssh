@@ -1,12 +1,12 @@
 # Security
 
-## Current foundation
+## Current single-node implementation
 
-The current Server exposes only placeholder assets plus `/health` and `/ready`. API/auth prefixes return not-implemented responses. Relay makes no network connection. Server clustering, product credentials, and terminal data do not exist yet.
+The current Server initializes PostgreSQL, registers a fenced incarnation, serves the protected API and Browser, manages generated encrypted SSH credentials and Machines, accepts Relay enrollment/tunnels, claims actual Machine owners, and opens constrained read-only SSH/tmux attachments. Terminal bytes and current projections remain owner-local and are not persisted. Writable Browser input and clustered internal owner WSS are not implemented.
 
-## Target Deployment trust boundary
+## Deployment trust boundary
 
-Once implemented, every Server node is a high-trust bastion in one Deployment trust domain. All Serving nodes run the exact same Server build and Deployment-critical configuration:
+Every Server node is a high-trust bastion in one Deployment trust domain. All Serving nodes run the exact same Server build and Deployment-critical configuration:
 
 - every node holds the one Deployment API key and SSH private-key encryption key;
 - clustered nodes hold the one cluster key and an internal TLS identity;
@@ -22,7 +22,7 @@ One `OWLMUX_API_KEY`, formatted as `owlmux_sk_v1_` plus canonical unpadded base6
 
 Browser keeps the key only in current page memory, sends Bearer on every protected HTTP request, and sends it once as the first bounded attachment-WebSocket frame. It never enters URL/query/cookie/subprotocol/Web Storage/service worker/logs/analytics. Reload or logout clears it.
 
-The accepting node verifies the key before Machine lookup, owner resolution, internal owner-WSS, or target allocation. Only Browser/Machine-affine API traffic may use at most one such hop; Relay/enrollment stays on its accepting node. A remote owner receives only short-lived cluster-authenticated verified context, never raw API-key bytes.
+The accepting node verifies the key before Machine lookup, owner resolution, internal owner-WSS, or target allocation. Attachment and Relay upgrades share a node-wide pre-authentication attempt bound plus an expiry-pruned per-observed-TCP-peer bound; those attempt permits are released immediately after first-frame authentication, while established connections retain their separate capacity permit. OwlMux does not trust forwarded-address headers, so a reverse proxy is intentionally one observed peer for this limiter and must enforce any desired client-IP policy itself. Only Browser/Machine-affine API traffic may use at most one owner hop; Relay/enrollment stays on its accepting node. A remote owner receives only short-lived cluster-authenticated verified context, never raw API-key bytes.
 
 Same-origin XSS can steal the key and control the entire Deployment. Restrictive CSP, no third-party scripts, safe rendering, exact Origin, and memory-only handling are security boundaries, not optional UI hardening.
 
@@ -53,6 +53,8 @@ A compromised Server node or cluster key is a Deployment-wide incident. Isolate 
 
 ## Target trust and Browser writer coordination
 
+The current read-only workspace implements target observation only; the writer coordination described later in this section is accepted target design.
+
 Target tmux and sshd are authoritative. A compromised expected target can emit malicious terminal data or control its shell. Host verification prevents silent routing to a different host but does not make the expected host trustworthy.
 
 One owner-local pointer identifies the Browser attachment allowed to send OwlMux input, target resize, session creation, and the small typed mutation set for a Machine connection epoch/socket incarnation. Any API-key holder can explicitly take it over, so it is coordination UX rather than a privilege boundary. The owner atomically replaces the pointer and verifies the authenticated connection plus Machine/attachment epochs on every write; there is no writer TTL, renewal, generation, token, or distributed lock. Native tmux clients remain outside this coordination.
@@ -74,7 +76,7 @@ OpenSSH uses a dedicated Server-owned configuration, strict host inputs, exact M
 
 Child cleanup cannot remove siblings or another node's files. Each node scavenges only fully validated OwlMux-owned orphans from its own root. A hard crash can leave bounded plaintext until private mount/container teardown or that node's next startup.
 
-Credentials may be reused by multiple Machines. UI exposes reuse count because compromise scope follows all bindings. Initialization generates a default Ed25519 credential; the API-key holder may generate, rename, reset, rotate by replacement, and rebind. OwlMux accepts no private-key upload, imported key, passphrase, or alternate algorithm, and never reveals/downloads stored private keys. Target administrators exclusively install/remove public keys; OwlMux/Relay never mutate authorization stores. Rebind affects future SSH authentication and does not revoke an already authenticated child.
+Credentials may be reused by multiple Machines. UI exposes reuse count because compromise scope follows all bindings. Initialization generates a default Ed25519 credential; the current API-key holder may generate, rename, reset, select a default, rotate by replacement, and retire an unreferenced non-default credential. OwlMux accepts no private-key upload, imported key, passphrase, or alternate algorithm, and never reveals/downloads stored private keys. Target administrators exclusively install/remove public keys; OwlMux/Relay never mutate authorization stores. The target complete lifecycle adds explicit active-Machine rebind for future SSH children without revoking an already authenticated child; that operation is not implemented in Blocks 0–3.
 
 ## Database and backup compromise
 
@@ -90,7 +92,7 @@ A compromise remains Deployment-local only if operators do not reuse secrets or 
 
 ## Process continuity
 
-API-key replacement, node drain/fence, Machine owner loss, Machine disablement, Relay revocation, database failure, or infrastructure loss closes OwlMux access only. Credential rebind applies to future SSH children. None of these actions kills target tmux.
+API-key replacement, node drain/fence, Machine owner loss, Machine disablement, Relay revocation, database failure, or infrastructure loss closes OwlMux access only. In the target complete lifecycle, credential rebind applies only to future SSH children. None of these actions kills target tmux.
 
 ## Reporting vulnerabilities
 

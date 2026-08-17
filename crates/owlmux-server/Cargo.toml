@@ -11,15 +11,30 @@ categories = ["web-programming::http-server"]
 publish = false
 
 [dependencies]
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.22.1"
+chacha20poly1305 = "0.10.1"
+ed25519-dalek = "2.2.0"
+futures-util = "0.3.32"
+nix = { version = "0.31.1", features = ["fs", "time"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
 serde = { version = "1.0.228", features = ["derive"] }
-tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
-tower-http = { version = "0.7.0", features = ["fs", "trace"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+ssh-key = { version = "0.6.7", features = ["ed25519", "rand_core"] }
+sqlx = { version = "0.8.6", features = ["migrate", "postgres", "runtime-tokio-rustls", "uuid"] }
+subtle = "2.6.1"
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7.17", features = ["rt"] }
+tower = { version = "0.5.3", features = ["limit", "timeout", "util"] }
+tower-http = { version = "0.7.0", features = ["fs", "limit", "set-header", "timeout", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+uuid = { version = "1.21.0", features = ["serde", "v4"] }
+zeroize = "1.8.2"
 
 [dev-dependencies]
-tower = { version = "0.5.3", features = ["util"] }
+testcontainers = "0.26.3"
 
 [lints]
 workspace = true

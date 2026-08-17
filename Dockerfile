@@ -10,6 +10,7 @@ RUN pnpm --filter @owlmux/web build
 
 FROM rust:1.97-bookworm AS rust-builder
 
+ARG OWLMUX_BUILD_REVISION=unknown
 WORKDIR /workspace
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates crates

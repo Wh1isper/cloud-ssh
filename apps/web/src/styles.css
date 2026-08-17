@@ -304,3 +304,306 @@ h1 {
     margin-top: 28px;
   }
 }
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  color: #f7f4ed;
+  background: #172033;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:hover {
+  background: #245b47;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgb(23 32 51 / 20%);
+  border-radius: 9px;
+  color: #172033;
+  background: rgb(255 255 255 / 76%);
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #455266;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.login-shell {
+  display: grid;
+  min-height: 100vh;
+  padding: 28px;
+  place-items: center;
+}
+
+.login-card {
+  width: min(100%, 620px);
+  padding: clamp(30px, 6vw, 62px);
+  border: 1px solid rgb(23 32 51 / 13%);
+  border-radius: 24px;
+  background: rgb(255 255 255 / 66%);
+  box-shadow: 0 28px 80px rgb(23 32 51 / 12%);
+}
+
+.login-card h1,
+.control-header h1 {
+  font-size: clamp(42px, 7vw, 68px);
+}
+
+.login-card > p:not(.eyebrow, .error-banner) {
+  color: #536073;
+  line-height: 1.65;
+}
+
+.login-card form,
+.compact-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 28px;
+}
+
+.control-shell {
+  width: min(1280px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 44px 0 72px;
+}
+
+.control-header {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 30px;
+  border-bottom: 1px solid rgb(23 32 51 / 14%);
+}
+
+.muted {
+  color: #637083;
+}
+
+.error-banner,
+.token-card {
+  margin: 22px 0;
+  padding: 16px 18px;
+  border-radius: 12px;
+}
+
+.error-banner {
+  color: #7b2626;
+  background: #f7dddd;
+}
+
+.token-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #c49d45;
+  background: #fff3c8;
+}
+
+.token-card h2,
+.token-card p {
+  margin: 0;
+}
+
+.token-card code {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.panel {
+  padding: 26px;
+  border: 1px solid rgb(23 32 51 / 12%);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 58%);
+}
+
+.panel h2 {
+  margin: 0;
+}
+
+.resource-list {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.resource-list li {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgb(237 238 232 / 78%);
+}
+
+.resource-list span {
+  overflow-wrap: anywhere;
+  color: #637083;
+  font-size: 13px;
+}
+
+.resource-list button {
+  justify-self: start;
+  margin-top: 5px;
+}
+
+@media (max-width: 820px) {
+  .control-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.workspace-shell {
+  width: min(1440px, calc(100% - 40px));
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.workspace-header {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.workspace-header h1 {
+  font-size: clamp(36px, 5vw, 58px);
+}
+
+.workspace-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.session-chooser,
+.terminal-panel {
+  padding: 24px;
+  border: 1px solid rgb(23 32 51 / 14%);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 64%);
+}
+
+.session-chooser h2 {
+  margin-top: 0;
+}
+
+.terminal-panel {
+  overflow: hidden;
+  color: #e5e7eb;
+  background: #111827;
+  box-shadow: 0 24px 70px rgb(17 24 39 / 24%);
+}
+
+.target-window-header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 4px 14px;
+  color: #d1d5db;
+  font-size: 13px;
+}
+
+.target-window-header span {
+  color: #9ca3af;
+}
+
+.pane-layout {
+  position: relative;
+  width: 100%;
+  min-height: 360px;
+  max-height: 76vh;
+  overflow: hidden;
+  background: #030712;
+}
+
+.tmux-pane {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #374151;
+  background: #111827;
+}
+
+.tmux-pane.is-active {
+  border-color: #6ee7b7;
+  box-shadow: inset 0 0 0 1px #6ee7b7;
+}
+
+.tmux-pane-header {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  padding: 2px 6px;
+  overflow: hidden;
+  color: #d1d5db;
+  background: rgb(3 7 18 / 84%);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tmux-pane-terminal,
+.tmux-pane-terminal .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 760px) {
+  .workspace-shell {
+    width: min(100% - 24px, 1440px);
+  }
+
+  .workspace-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+.resource-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

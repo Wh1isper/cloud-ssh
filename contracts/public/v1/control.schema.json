@@ -1,0 +1,81 @@
+{
+  "$id": "https://owlmux.dev/contracts/public/v1/control.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "CreateCredentialInput": {
+      "additionalProperties": false,
+      "properties": { "name": { "maxLength": 64, "minLength": 1, "type": "string" } },
+      "required": ["name"], "type": "object"
+    },
+    "CreateMachineInput": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": { "maxLength": 64, "minLength": 1, "type": "string" },
+        "host_identity": { "maxLength": 2048, "minLength": 32, "pattern": "^ssh-ed25519 ", "type": "string" },
+        "ssh_credential_id": { "format": "uuid", "type": "string" },
+        "target_account": { "maxLength": 64, "minLength": 1, "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$", "type": "string" },
+        "tmux_path": { "maxLength": 256, "minLength": 1, "type": "string" },
+        "tmux_socket_identity": { "maxLength": 128, "minLength": 1, "type": "string" }
+      },
+      "required": ["alias", "host_identity", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+    },
+    "CredentialSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "bound_machine_count": { "minimum": 0, "type": "integer" },
+        "is_default": { "type": "boolean" },
+        "name": { "type": "string" },
+        "public_fingerprint_sha256": { "type": "string" },
+        "public_key": { "type": "string" },
+        "ssh_credential_id": { "format": "uuid", "type": "string" },
+        "status": { "enum": ["active", "retired"] }
+      },
+      "required": ["bound_machine_count", "is_default", "name", "public_fingerprint_sha256", "public_key", "ssh_credential_id", "status"], "type": "object"
+    },
+    "DeploymentPresentation": {
+      "additionalProperties": false,
+      "properties": {
+        "config_epoch": { "minimum": 1, "type": "integer" },
+        "default_ssh_credential_id": { "format": "uuid", "type": "string" },
+        "deployment_id": { "format": "uuid", "type": "string" },
+        "profile": { "const": "single_node" },
+        "server_build_id": { "type": "string" }
+      },
+      "required": ["config_epoch", "default_ssh_credential_id", "deployment_id", "profile", "server_build_id"], "type": "object"
+    },
+    "EnrollmentTokenResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "enrollment_expires_in": { "maximum": 900, "minimum": 1, "type": "integer" },
+        "enrollment_token": { "type": "string" }
+      },
+      "required": ["enrollment_expires_in", "enrollment_token"], "type": "object"
+    },
+    "MachineCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "enrollment_expires_in": { "maximum": 900, "minimum": 1, "type": "integer" },
+        "enrollment_token": { "type": "string" },
+        "machine": { "$ref": "#/$defs/MachineSummary" }
+      },
+      "required": ["enrollment_expires_in", "enrollment_token", "machine"], "type": "object"
+    },
+    "MachineSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": { "type": "string" },
+        "host_identity": { "type": "string" },
+        "lifecycle": { "enum": ["pending", "verifying", "active", "disabled"] },
+        "machine_id": { "format": "uuid", "type": "string" },
+        "reachability": { "enum": ["unknown", "connecting", "reachable", "temporarily_unavailable", "owner_unreachable"] },
+        "ssh_credential_id": { "format": "uuid", "type": "string" },
+        "target_account": { "type": "string" },
+        "tmux_path": { "type": "string" },
+        "tmux_socket_identity": { "type": "string" }
+      },
+      "required": ["alias", "host_identity", "lifecycle", "machine_id", "reachability", "ssh_credential_id", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+    }
+  },
+  "title": "OwlMux Block 1 control plane v1",
+  "type": "object"
+}

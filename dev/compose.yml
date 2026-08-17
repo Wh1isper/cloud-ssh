@@ -1,19 +1,46 @@
+name: ${OWLMUX_COMPOSE_PROJECT:-owlmux-dev}
+
 services:
   postgres:
     image: postgres:17.10-alpine
     environment:
-      POSTGRES_DB: owlmux
-      POSTGRES_PASSWORD: owlmux
-      POSTGRES_USER: owlmux
+      POSTGRES_DB: ${OWLMUX_POSTGRES_DB:-owlmux}
+      POSTGRES_PASSWORD: ${OWLMUX_POSTGRES_PASSWORD:-owlmux}
+      POSTGRES_USER: ${OWLMUX_POSTGRES_USER:-owlmux}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready --username owlmux --dbname owlmux"]
+      test: ["CMD-SHELL", "pg_isready --username $$POSTGRES_USER --dbname $$POSTGRES_DB"]
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 3s
     ports:
-      - "127.0.0.1:55432:5432"
+      - "127.0.0.1:${OWLMUX_POSTGRES_PORT:-55433}:5432"
     volumes:
       - owlmux-postgres:/var/lib/postgresql/data
 
+  target:
+    profiles: ["target"]
+    build:
+      context: ..
+      dockerfile: ${OWLMUX_TARGET_DOCKERFILE:-dev/target.Dockerfile}
+      args:
+        OWLMUX_TARGET_BASE_IMAGE: ${OWLMUX_TARGET_BASE_IMAGE:-debian:13-slim}
+        OWLMUX_TARGET_LOGIN_SHELL: ${OWLMUX_TARGET_LOGIN_SHELL:-/bin/bash}
+        OWLMUX_TMUX_SHA256: ${OWLMUX_TMUX_SHA256:-87f2e99e3b685973f2ca002ffd6ed7e51a5744f7009daae5a15670b6d532db96}
+        OWLMUX_TMUX_VERSION: ${OWLMUX_TMUX_VERSION:-3.7b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/sbin/sshd -t"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    volumes:
+      - owlmux-target-host-keys:/etc/ssh
+      - owlmux-target-relay-state:/var/lib/owlmux
+
 volumes:
   owlmux-postgres:
+  owlmux-target-host-keys:
+  owlmux-target-relay-state:

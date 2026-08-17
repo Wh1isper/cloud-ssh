@@ -1,7 +1,7 @@
 # Deployment access and SSH credentials
 
-::: warning Target design
-The access, cluster, Machine, credential, and Relay behavior below is specified but not implemented in the current foundation.
+::: info Current and target scope
+The Deployment API key, page-memory-only Browser handling, generated encrypted SSH credentials, Machine control, and Relay enrollment are implemented in the single-node profile. Internal cluster authentication, remote-owner handoff, online API-key rotation, and active-Machine credential rebind remain target design.
 :::
 
 ## One Deployment API key
@@ -58,16 +58,19 @@ Initialization generates one default Ed25519 key pair. The API-key holder may:
 - reset to a newly generated default credential;
 - select another default;
 - rotate by creating a replacement;
-- explicitly rebind a Machine;
 - retire an unreferenced non-default credential.
 
 Server generates key material in memory, derives the public key and SHA-256 fingerprint, encrypts before persistence, clears plaintext buffers, and returns only public metadata. OwlMux accepts no private-key upload, imported key, passphrase, algorithm selector, or alternate SSH key algorithm.
 
 An unknown create/reset outcome remains unknown. Browser refreshes public metadata and never automatically retries the mutation.
 
-Reset/rotation does not rebind existing Machines, retire the previous key, install the replacement public key, or remove old target authorization. Target administrators perform public-key changes externally, then the API-key holder rebinds Machines. Rebind has no preflight SSH proof and may be switched back to a previous still-active credential.
+Reset/rotation does not change existing Machine bindings, retire the previous key, install the replacement public key, or remove old target authorization. In the current Blocks 0–3 profile, a Machine keeps the credential selected at creation; active-Machine credential rebind is not implemented.
 
-An active Machine rebind is an ordinary PostgreSQL control-plane update for future SSH children. It increments the independent credential revision, leaves the owner-fencing route revision unchanged, and does not tear down the current Relay owner or an already authenticated OpenSSH child. Each existing child pins the credential snapshot used at creation, so it is not an urgent revocation mechanism. For urgent access removal, disable the Machine and remove the public key through target administration. Target tmux remains untouched.
+### Target active-Machine rebind
+
+The complete target lifecycle adds explicit active-Machine rebind after target administrators perform public-key changes externally. Rebind has no preflight SSH proof and may switch back to a previous still-active credential.
+
+That target operation is an ordinary PostgreSQL control-plane update for future SSH children. It increments the independent credential revision, leaves the owner-fencing route revision unchanged, and does not tear down the current Relay owner or an already authenticated OpenSSH child. Each existing child pins the credential snapshot used at creation, so rebind is not an urgent revocation mechanism. For urgent access removal, disable the Machine and remove the public key through target administration. Target tmux remains untouched.
 
 ## Private-key encryption and OpenSSH handoff
 
@@ -77,7 +80,7 @@ Every Server node has its own non-shared private runtime root, preferably on loc
 
 Child cleanup cannot remove siblings. Each node scavenges only its own fully validated local OwlMux-owned orphans and fails closed on ambiguity. No network/shared runtime root or cross-node cleanup exists. A hard crash can leave bounded plaintext until private mount/container teardown or that node's next startup, which is an explicit supported limitation.
 
-If the encryption key is lost, restore it or replace credentials, install their public keys, and rebind Machines. If key plus envelopes may be disclosed, treat every stored SSH credential as compromised and remove those credentials' target public keys after replacement.
+If the encryption key is lost, restore the exact key or treat the stored envelopes as unusable and rebuild the pre-release Deployment's credential/Machine authorization safely. The complete target lifecycle will also support replacement credentials followed by explicit rebind. If key plus envelopes may be disclosed, treat every stored SSH credential as compromised and remove those credentials' target public keys after replacement.
 
 ## Separate Deployments
 

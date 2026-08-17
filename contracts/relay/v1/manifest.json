@@ -1,0 +1,10 @@
+{
+  "version": "relay.v1",
+  "protocol": 1,
+  "max_frame_bytes": 32768,
+  "max_data_bytes": 16384,
+  "max_streams": 32,
+  "pre_auth_timeout_seconds": 5,
+  "heartbeat_seconds": 15,
+  "schemas": ["relay.schema.json"]
+}

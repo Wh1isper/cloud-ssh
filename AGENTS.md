@@ -37,7 +37,7 @@ Server node, Relay, PostgreSQL, browser, or network failure
 - Do not add a Gateway/Worker split, scheduler/rebalance service, virtual-bucket coordinator, Redis, message queue, terminal broker, distributed writer lock, PostgreSQL HA orchestrator, or live-state migration layer.
 - Separate Deployments remain mutually independent trust domains. Each has its own origin, identity, all secrets, PostgreSQL, membership/owner registry, credentials, Machines, Relays, and live state; OwlMux provides no cross-Deployment global view, routing, migration, failover, or continuity.
 
-The current repository is Block 0 foundation only. Do not describe planned authentication, Machine management, Relay, SSH, or tmux behavior as implemented.
+The current repository implements Blocks 0–3 in the single-node profile: Deployment/API-key and credential custody, pending Machine control, Relay enrollment/tunnel/actual ownership, and read-only SSH/tmux attachment. Do not describe writable terminal interaction, remote-owner/internal-WSS routing, or clustered operation as implemented.
 
 ## Deployment access
 
@@ -130,3 +130,7 @@ make dev-down
 - A public or internal capability is not implemented until its reviewed versioned schemas, error/status mappings, and WebSocket close codes are committed as artifacts consumed by Browser, Server, and tests as applicable.
 - CI is the validation authority. Release workflows publish CI-qualified commits and must not duplicate lint or tests.
 - Use function-style tests and explicit, bounded failure semantics.
+
+## AnyCap
+
+AnyCap is available for current web research and multimodal work. Before use, read the installed `anycap-cli` skill and verify the CLI with `anycap status`; report capability failures with their request or trace identifiers.

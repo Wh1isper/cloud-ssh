@@ -1,12 +1,12 @@
 # Relay and roaming
 
-::: warning Target design
-Relay enrollment, reverse transport, accepting-ingress Machine ownership, SSH, tmux control mode, and Browser roaming are not implemented in the current foundation.
+::: info Current and target scope
+Blocks 0–3 implement the single-node path: one-use Relay enrollment, signed reverse transport, accepting-ingress Machine ownership, constrained OpenSSH, explicit tmux session choice, and a read-only Browser projection through real tmux control mode. Writable interaction and clustered remote-owner WSS routing remain target design.
 :::
 
 ## Why Relay exists
 
-A target machine may not have a public address or inbound firewall rule. OwlMux Relay will open an authenticated outbound WebSocket-over-TLS connection to one Deployment origin, normally over TCP 443.
+A target machine may not have a public address or inbound firewall rule. OwlMux Relay opens an authenticated outbound WebSocket connection to one Deployment origin. Production deployments terminate TLS and normally expose it over TCP 443.
 
 Any Serving Server node may accept that public connection. Ordinary load balancing determines the ingress. After Relay authentication, that exact accepting incarnation is the only node allowed to claim the Machine in PostgreSQL under a new monotonic connection epoch, and it holds the tunnel plus all Machine-affine state locally.
 
@@ -55,9 +55,9 @@ An active Relay reconnect authenticates its Machine-bound Ed25519 transcript at 
 
 A valid but unreachable owner is not bypassed. The deployment operator fences/stops/isolates that owner node, waits for PostgreSQL lease expiry, and lets Relay retry. Node join affects only later connections and OwlMux has no rebalance or balance guarantee. Old logical streams, SSH bytes, and pending operations never migrate or replay.
 
-## What Relay will not do
+## What Relay does not do
 
-Relay will not:
+Relay does not:
 
 - start a shell or coding agent;
 - create a PTY;
@@ -77,10 +77,14 @@ Tunnel, owner-node, or database loss closes OwlMux attachments only. tmux contin
 
 OwlMux stores the generated Ed25519 Deployment credential selected for the Machine and presents Server-derived public-key metadata. It accepts no private-key upload or alternate key algorithm. The target administrator exclusively owns public-key installation and removal through external operational tooling. Relay never modifies target authorization stores; enrollment only opens a bounded proof path so the accepting Server can verify the exact credential after readiness confirmation.
 
-The current owner runs a constrained OpenSSH child and enters tmux control mode through a closed typed remote-entry renderer. The target administrator must install and operate tmux; OwlMux detects and explains missing or incompatible tmux but never installs or changes it. The minimum target baseline is tmux 3.2a. Server checks a small known-bad denylist and bounded required capabilities before a writable workspace, while representative CI covers selected maintained packages, one current release, qualified shells, and Relay-backed Browser E2E. The initial Relay protocol accepts one exact version without negotiation or a compatibility manifest; policy for older versions waits until a second protocol version exists.
+The current owner runs a constrained OpenSSH child and enters tmux control mode through a closed typed remote-entry renderer. The target administrator must install and operate tmux; OwlMux detects and explains missing or incompatible tmux but never installs or changes it. The minimum target baseline is tmux 3.2a. Server parses the configured client and any running-server version, checks the release-maintained known-bad denylist, and qualifies required control behavior before projection. The Docker E2E uses versioned Node attachment-WebSocket clients and real Chromium acceptance in every CI profile against Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with dash, Debian 13 tmux 3.5a, and checksum-pinned upstream tmux 3.7b. The broader target qualification policy also covers qualified shells and additional lifecycle/failure fixtures as those surfaces are delivered. The initial Relay protocol accepts one exact version without negotiation or a compatibility manifest; policy for older versions waits until a second protocol version exists.
 
-The owner translates target sessions, windows, panes, layouts, and output into typed Browser messages. A non-owner Browser ingress uses at most one bounded internal owner WSS hop. Machine-affine one-shot API requests use the same destination-challenge/HMAC WSS mode; Relay never does. The browser renders each pane with xterm.js and never selects a node.
+The current single-node owner observes the selected session's target-current window and every visible pane in that window. It validates bounded pane IDs, coordinates, dimensions, titles, current commands, and exactly one target-active pane. During hydration it manually pauses delivery for the same read-only tmux control client, rejects unstable metadata, then continues each pane and runs `capture-pane` followed by final terminal metadata as one synchronous command list. The two consecutive guarded responses share one deadline; pane output between capture and metadata makes the cutover unstable, while a stable final cursor/mode observation drives the bootstrap. A complete post-capture topology observation must still match. Server discards only already-covered pre-barrier output, retains bounded post-barrier output, and keeps pumping the control stream while sending one projection epoch as metadata plus binary-safe snapshot chunks. Browser validates the closed protocol and cardinality, then atomically replaces the workspace with one read-only xterm.js instance per pane in the target-authoritative layout at the ready phase; buffered and new output is then split into bounded frames. Layout, pane, window, and session notifications cause a fresh bounded projection epoch, while control backpressure pause requires resynchronization rather than replay.
 
-After reconnect and only once no valid old owner remains, the accepting Relay node may claim a new Machine epoch and query/hydrate target state again. It will not replay ambiguous input or rely on a central output journal.
+A Relay route replacement discards owner-local SSH/tmux state and returns an existing read-only attachment to a fresh chooser after a bounded route wait; it never silently reselects the previous session or replays output. Writable interaction and writer takeover remain later delivery blocks.
+
+In the clustered target design, a non-owner Browser ingress uses at most one bounded internal owner WSS hop. Machine-affine one-shot API requests use the same destination-challenge/HMAC WSS mode; Relay never does. The Browser never selects a node.
+
+After reconnect and only once no valid old owner remains, the accepting Relay node may claim a new Machine epoch and query target state again. It does not rely on a central output journal. Later writable interaction will not replay ambiguous input.
 
 Read the normative [Relay enrollment and transport specification](https://github.com/owlfoundry/owlmux/blob/main/spec/03-relay-enrollment-and-transport.md) and [SSH/tmux attachment specification](https://github.com/owlfoundry/owlmux/blob/main/spec/04-ssh-tmux-attachment-and-roaming.md).

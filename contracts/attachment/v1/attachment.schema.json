@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://owlmux.dev/contracts/attachment/v1/attachment.schema.json",
+  "title": "OwlMux read-only attachment v1",
+  "oneOf": [{ "$ref": "#/$defs/clientFrame" }, { "$ref": "#/$defs/serverFrame" }],
+  "$defs": {
+    "clientFrame": {
+      "oneOf": [
+        { "$ref": "#/$defs/auth" },
+        { "$ref": "#/$defs/select" },
+        { "$ref": "#/$defs/returnToChooser" },
+        { "$ref": "#/$defs/detach" }
+      ]
+    },
+    "serverFrame": {
+      "oneOf": [
+        { "$ref": "#/$defs/phase" },
+        { "$ref": "#/$defs/sessionList" },
+        { "$ref": "#/$defs/projection" },
+        { "$ref": "#/$defs/paneSnapshot" },
+        { "$ref": "#/$defs/output" },
+        { "$ref": "#/$defs/error" }
+      ]
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "api_key"],
+      "properties": {
+        "type": { "const": "auth.api_key" },
+        "api_key": { "type": "string", "minLength": 56, "maxLength": 64 }
+      }
+    },
+    "select": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "selection_epoch", "session_id", "session_created"],
+      "properties": {
+        "type": { "const": "session.select" },
+        "selection_epoch": { "type": "string", "format": "uuid" },
+        "session_id": { "$ref": "#/$defs/sessionId" },
+        "session_created": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "returnToChooser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "workspace.return_to_chooser" } }
+    },
+    "detach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "workspace.detach" } }
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "phase"],
+      "properties": {
+        "type": { "const": "workspace.phase" },
+        "phase": { "enum": ["connecting", "selecting", "ready", "failed"] }
+      }
+    },
+    "sessionList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "selection_epoch",
+        "tmux_client_version",
+        "tmux_server_version",
+        "sessions"
+      ],
+      "properties": {
+        "type": { "const": "session.list" },
+        "selection_epoch": { "type": "string", "format": "uuid" },
+        "tmux_client_version": { "type": "string", "maxLength": 32 },
+        "tmux_server_version": {
+          "oneOf": [
+            { "type": "string", "maxLength": 32 },
+            { "type": "null" }
+          ]
+        },
+        "sessions": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/session" }
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "session_created",
+        "name",
+        "attached_client_count",
+        "window_count"
+      ],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/sessionId" },
+        "session_created": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "maxLength": 128 },
+        "attached_client_count": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "window_count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "workspace_epoch",
+        "session_id",
+        "session_created",
+        "window",
+        "panes"
+      ],
+      "properties": {
+        "type": { "const": "workspace.projection" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "session_id": { "$ref": "#/$defs/sessionId" },
+        "session_created": { "type": "integer", "minimum": 1 },
+        "window": { "$ref": "#/$defs/window" },
+        "panes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/pane" }
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window_id", "name", "width", "height", "layout"],
+      "properties": {
+        "window_id": { "$ref": "#/$defs/windowId" },
+        "name": { "type": "string", "maxLength": 128 },
+        "width": { "$ref": "#/$defs/dimension" },
+        "height": { "$ref": "#/$defs/dimension" },
+        "layout": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "pane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pane_id",
+        "active",
+        "width",
+        "height",
+        "left",
+        "top",
+        "title",
+        "current_command"
+      ],
+      "properties": {
+        "pane_id": { "$ref": "#/$defs/paneId" },
+        "active": { "type": "boolean" },
+        "width": { "$ref": "#/$defs/dimension" },
+        "height": { "$ref": "#/$defs/dimension" },
+        "left": { "type": "integer", "minimum": 0, "maximum": 9999 },
+        "top": { "type": "integer", "minimum": 0, "maximum": 9999 },
+        "title": { "type": "string", "maxLength": 256 },
+        "current_command": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "paneSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "workspace_epoch",
+        "pane_id",
+        "chunk_index",
+        "final",
+        "data_base64"
+      ],
+      "properties": {
+        "type": { "const": "workspace.pane_snapshot" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "pane_id": { "$ref": "#/$defs/paneId" },
+        "chunk_index": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "final": { "type": "boolean" },
+        "data_base64": { "$ref": "#/$defs/terminalBytes" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "workspace_epoch", "pane_id", "data_base64"],
+      "properties": {
+        "type": { "const": "workspace.output" },
+        "workspace_epoch": { "type": "string", "format": "uuid" },
+        "pane_id": { "$ref": "#/$defs/paneId" },
+        "data_base64": { "$ref": "#/$defs/terminalBytes" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "workspace.error" },
+        "code": {
+          "enum": [
+            "unauthenticated",
+            "invalid_origin",
+            "machine_unavailable",
+            "stale_selection",
+            "tmux_missing",
+            "tmux_incompatible",
+            "target_unavailable",
+            "protocol_error"
+          ]
+        },
+        "message": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "sessionId": { "type": "string", "pattern": "^\\$[0-9]+$", "maxLength": 32 },
+    "windowId": { "type": "string", "pattern": "^@[0-9]+$", "maxLength": 32 },
+    "paneId": { "type": "string", "pattern": "^%[0-9]+$", "maxLength": 32 },
+    "dimension": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "terminalBytes": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]*$",
+      "maxLength": 21848
+    }
+  }
+}

@@ -1,8 +1,10 @@
 # OwlMux
 
-OwlMux is a planned self-hosted terminal roaming gateway built on SSH and target-owned tmux. Target tmux owns every session, pane PTY, scrollback buffer, and child process. OwlMux will provide a graphical Web client and an outbound Relay so users can reconnect without moving session ownership to public Server nodes.
+OwlMux is a self-hosted terminal roaming gateway built on SSH and target-owned tmux. Target tmux owns every session, pane PTY, scrollback buffer, and child process. OwlMux provides a graphical Web client and an outbound Relay so users can reconnect without moving session ownership to public Server nodes.
 
-> **Foundation status:** the repository currently contains two placeholder Rust binaries, a placeholder React page, PostgreSQL development infrastructure, VitePress documentation, Docker packaging, and CI. Deployment API-key access, cluster membership/ownership, Machine management, Relay transport, SSH, and tmux integration are specified but not implemented.
+> **Current implementation:** Blocks 0–3 are implemented and Docker-qualified in the single-node profile: Deployment API-key access, generated encrypted SSH credentials, pending Machine management, one-use Relay enrollment, signed Relay tunnels, accepting-ingress ownership, constrained OpenSSH, an explicit tmux session chooser, and a target-authoritative read-only xterm.js projection of every visible pane in the selected session's target-current window through real tmux control mode. Writable terminal interaction and clustered internal owner-WSS routing remain target design, not current behavior.
+
+The following diagram shows the accepted target topology. The current profile runs one Server node and has no internal owner WSS.
 
 ```mermaid
 flowchart LR
@@ -20,7 +22,7 @@ flowchart LR
     tmux --> process["Shell or coding agent"]
 ```
 
-## Product boundary
+## Target product boundary
 
 - One self-hosted Deployment contains one public origin, one private PostgreSQL database, one Deployment API key, and one or more symmetric `owlmux-server` nodes.
 - Each node is one Tokio multi-threaded process that can use its assigned host cores. Horizontal scale adds symmetric nodes from the exact same Server artifact and Deployment-critical configuration; OwlMux does not split Gateway and Worker binaries.
@@ -36,17 +38,17 @@ flowchart LR
 - Separate Deployments remain independent trust domains with separate origins, databases, secrets, membership, resources, and live state. OwlMux provides no cross-Deployment routing, migration, failover, or global view.
 - Relay forwards SSH bytes to enrolled loopback sshd and never owns tmux, a process, or target SSH authorization stores.
 - Browser, Server node, Relay, PostgreSQL, and network failure may interrupt an attachment but must not terminate target tmux.
-- Deployment initialization generates one default Ed25519 key pair; the API-key holder may generate, rename, reset, rotate by replacement, and rebind Deployment credentials. OwlMux accepts no private-key upload or alternate SSH key algorithm. Target administrators exclusively install and remove public keys through external operational tooling; OwlMux and Relay never mutate `authorized_keys` or equivalent authorization stores.
+- Deployment initialization generates one default Ed25519 key pair. The current profile supports generation, rename, default selection/reset, replacement rotation, and retirement of an unreferenced non-default credential; active-Machine rebind remains target complete-lifecycle design. OwlMux accepts no private-key upload or alternate SSH key algorithm. Target administrators exclusively install and remove public keys through external operational tooling; OwlMux and Relay never mutate `authorized_keys` or equivalent authorization stores.
 - The target administrator installs and operates tmux. The target design uses tmux 3.2a as its minimum, performs bounded runtime capability probes, maintains a small known-bad denylist, and uses representative CI evidence rather than a package allowlist or Cartesian profile manifest; OwlMux detects incompatibility but never installs, upgrades, downgrades, configures, patches, or repairs tmux.
 
 The normative design is under [`spec/`](spec/README.md).
 
 ## Repository layout
 
-- `crates/owlmux-server` — symmetric public/internal Server-node foundation;
-- `crates/owlmux-relay` — target-side outbound Relay foundation;
-- `apps/web` — React and Vite placeholder application;
-- `dev` — PostgreSQL Compose infrastructure;
+- `crates/owlmux-server` — single-node Deployment, Relay ingress, constrained SSH/tmux, API, and attachment runtime;
+- `crates/owlmux-relay` — target-side enrolled reverse-connection runtime;
+- `apps/web` — React control plane and read-only xterm.js workspace;
+- `dev` — PostgreSQL plus opt-in loopback sshd/tmux target fixtures;
 - `docs` — VitePress documentation and Cloudflare Workers configuration;
 - `spec` — accepted target product and architecture specifications.
 
@@ -61,20 +63,29 @@ make test
 make build
 ```
 
-Run the placeholder Server:
+Run the single-node Server with disposable development configuration:
 
 ```bash
 make dev
 ```
 
-Then open `http://127.0.0.1:8080`. Only `/health`, `/ready`, and the placeholder Web application are implemented.
+Then open `http://127.0.0.1:8080`, enter the disposable API key from `dev/server.env`, and use the control plane. A target administrator must install the selected generated public key before Relay enrollment can prove SSH access.
 
-Start development infrastructure when needed:
+Start PostgreSQL or the full target fixture when needed:
 
 ```bash
 make dev-up
 make dev-status
+make dev-target-up
+make dev-target-status
 make dev-down
+```
+
+Run the isolated real PostgreSQL/Relay/OpenSSH/tmux acceptance path with versioned Node attachment-WebSocket clients and headless Chromium. It covers enrollment recovery, credential locking, two-pane projection and xterm rendering under the product CSP, a four-pane continuous-token snapshot/live cutover stress case, binary live output, projection refresh, route replacement, active re-enrollment, zero-session recovery, hard fencing, reload key clearing, and target tmux survival. The matrix command repeats the complete path with Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b:
+
+```bash
+make test-e2e
+make test-e2e-matrix
 ```
 
 Build and smoke-test the production image:

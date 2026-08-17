@@ -1,0 +1,13 @@
+{
+  "$id": "https://owlmux.dev/contracts/public/v1/error.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "code": { "enum": ["not_implemented", "unauthenticated", "invalid_name", "invalid_target_account", "invalid_tmux_path", "invalid_tmux_socket", "invalid_host_identity", "not_found", "credential_in_use", "invalid_lifecycle", "conflict", "temporarily_unavailable", "operation_ambiguous", "internal_error"] },
+    "message": { "maxLength": 256, "minLength": 1, "type": "string" },
+    "retry_after": { "maximum": 30, "minimum": 1, "type": "integer" }
+  },
+  "required": ["code", "message"],
+  "title": "OwlMux public error v1",
+  "type": "object"
+}

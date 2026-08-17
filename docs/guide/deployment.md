@@ -1,13 +1,10 @@
 # Deployment
 
-## Current foundation
+## Current single-node image
 
-The current production image runs only the placeholder `owlmux-server`:
+The current production image runs one unprivileged `owlmux-server` process with embedded control-plane/read-only-workspace assets. It requires PostgreSQL, the Deployment API key, the SSH encryption key, a writable node-local private SSH runtime root, and one coherent configuration epoch. It exposes health/readiness, protected control-plane APIs, Relay v1 enrollment/tunnel ingress, and exact-Origin read-only attachment WebSockets.
 
-- one unprivileged process;
-- embedded placeholder Web assets;
-- `/health` and `/ready`;
-- no database connection, authentication, Server membership/ownership, internal cluster listener, Relay, SSH, or tmux behavior.
+The image implements only the single-node local-owner profile. It does not expose clustered internal owner WSS or writable terminal operations.
 
 Build and smoke-test it with:
 
@@ -15,11 +12,11 @@ Build and smoke-test it with:
 make docker-build
 ```
 
-The default listener is `0.0.0.0:8080` in the image. Production TLS belongs at a trusted reverse proxy. Do not expose this foundation as a functional terminal service.
+The default listener is `0.0.0.0:8080` in the image. Production TLS belongs at a trusted reverse proxy. Relay and Browser attachment endpoints should be exposed only as HTTPS/WSS at one exact configured public origin.
 
 ## Development infrastructure
 
-`dev/compose.yml` provides PostgreSQL for future product blocks:
+`dev/compose.yml` provides PostgreSQL plus an opt-in loopback sshd/tmux target fixture:
 
 ```bash
 make dev-up
@@ -27,11 +24,11 @@ make dev-status
 make dev-down
 ```
 
-The services bind only to loopback development ports. Their default development credentials are not production settings. The foundation Server does not connect to PostgreSQL yet.
+PostgreSQL binds only to a loopback development port. Default development credentials are not production settings. Use `make dev-target-up` for the target fixture and `make test-e2e` for an isolated full acceptance run.
 
-## Target Deployment shape
+## Target clustered Deployment shape
 
-Once implemented, one Deployment will run one or more symmetric Server nodes against one private PostgreSQL database:
+The accepted complete design extends the implemented one-node local-owner path to one or more symmetric Server nodes against one private PostgreSQL database:
 
 ```mermaid
 flowchart TB
@@ -85,11 +82,11 @@ The clustered profile additionally requires:
 
 ## Configuration status
 
-`OWLMUX_ADDR` and `OWLMUX_WEB_DIR` are the only implemented OwlMux-specific Server environment variables. The standard `RUST_LOG` filter controls structured logging.
+The current single-node Server implements `OWLMUX_ADDR`, `OWLMUX_WEB_DIR`, `OWLMUX_PUBLIC_ORIGIN`, `OWLMUX_DATABASE_URL`, `OWLMUX_API_KEY`, `OWLMUX_SSH_KEY_ENCRYPTION_KEY`, `OWLMUX_SSH_RUNTIME_ROOT`, `OWLMUX_CONFIG_EPOCH`, node lease TTL/safety margin, shutdown timeout, and optional diagnostic node name. The standard `RUST_LOG` filter controls structured logging.
 
-PostgreSQL, `OWLMUX_API_KEY`, `OWLMUX_CLUSTER_KEY`, `OWLMUX_SSH_KEY_ENCRYPTION_KEY`, Deployment configuration epoch, process incarnation/lease, internal TLS/WSS, private SSH runtime root, Machine, and Relay settings remain target design until their capabilities land.
+`OWLMUX_CLUSTER_KEY`, internal TLS/WSS, and clustered configuration proof remain target design.
 
-The target design requires:
+The complete design requires:
 
 - one API key formatted as `owlmux_sk_v1_` plus canonical unpadded base64url for exactly 32 operator-generated random bytes;
 - one canonical 32-byte SSH private-key encryption key shared by every node;
