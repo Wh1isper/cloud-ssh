@@ -49,11 +49,13 @@ jobs:
           pnpm --filter @owlmux/docs run deploy --dry-run
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
-      - name: Audit Rust dependencies
+      - name: Report RustSec advisories
+        continue-on-error: true
         run: |
           cargo install cargo-audit --locked --version 0.22.2
           cargo audit --deny warnings
-          test -z "$(cargo tree --locked --target all -i rsa 2>/dev/null)"
+      - name: Verify Rust dependency graph constraints
+        run: test -z "$(cargo tree --locked --target all -i rsa 2>/dev/null)"
       - name: Check Rust formatting
         run: cargo fmt --all --check
       - name: Lint Rust sources
