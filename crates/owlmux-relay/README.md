@@ -6,6 +6,16 @@ The Relay generates and atomically persists one permission-restricted Ed25519 ca
 
 Relay never starts a shell, creates a PTY, invokes tmux, selects a target destination, modifies an account or SSH authorization store, receives the Deployment API key, or preserves a logical stream across reconnect.
 
+## Install from crates.io
+
+Install the Relay binary from the published source package with the locked dependency graph recorded in that package:
+
+```bash
+cargo install --locked owlmux-relay
+```
+
+The matching portable binary archive is also attached to each OwlMux GitHub release.
+
 ## Enroll and run
 
 After the target administrator installs the Server-generated public key for the configured account, enroll once. The command prints the exact public-key metadata returned by Server and requires an explicit readiness confirmation before proof begins:

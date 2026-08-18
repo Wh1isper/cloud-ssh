@@ -20,7 +20,7 @@ This document records only the current technology selections. The concern specif
 | TS-012 | Browser attachment protocol         | Exact-Origin WebSocket, one bounded first API-key auth frame at ingress, then versioned bounded JSON with Machine/Attachment epochs and base64 terminal bytes                                                              | [05](05-deployment-access-and-authentication.md), [07](07-http-websocket-and-product-ui.md)                |
 | TS-013 | Documentation                       | One VitePress site deployed as Cloudflare Workers static assets                                                                                                                                                            | Public docs and repository boundary                                                                        |
 | TS-014 | Server packaging                    | One multi-stage Debian-based unprivileged Server image with OpenSSH client; the same image runs every node                                                                                                                 | [08](08-operations-security-and-resilience.md)                                                             |
-| TS-015 | Validation and release              | CI is source-validation authority; release workflows publish CI-qualified commits without repeating tests                                                                                                                  | Repository delivery boundary                                                                               |
+| TS-015 | Validation and release              | CI is source-validation authority and validates standalone source packages; release workflows publish CI-qualified archives, images, and crates.io packages without repeating tests                                        | Repository delivery boundary                                                                               |
 
 ## 2. Repository shape
 
@@ -206,19 +206,20 @@ The runtime image contains no Rust/Node toolchain, package manager, source tree,
 
 ## 15. CI and release
 
-CI on pull requests and `main` pushes is the source-validation authority. It installs and audits locked dependencies; checks formatting and lint; tests and builds Rust, Web, docs, and repository invariants; dry-runs docs deployment; verifies the qualified Relay glibc baseline; and builds and smoke-tests the Server image. A successful exact-`main` CI run is the only trigger accepted by documentation and development-image publication.
+CI on pull requests and `main` pushes is the source-validation authority. It installs and audits locked dependencies; checks formatting and lint; tests and builds Rust, Web, docs, and repository invariants; builds and test-compiles the standalone Server and Relay source packages; dry-runs docs deployment; verifies the qualified Relay glibc baseline; and builds and smoke-tests the Server image. A successful exact-`main` CI run is the only trigger accepted by documentation and development-image publication.
 
-Tag-driven release operates on a pushed, CI-qualified tag and performs artifact construction, source-revision metadata, checksums, GHCR upload, GitHub Release publication, and exact repository-version/tag validation. It does not repeat CI qualification or the source lint/test suite as a second authority.
+Tag creation is an operator-controlled release boundary: the operator creates one immutable version tag only after the exact `main` commit completes CI successfully. The tag-driven workflow intentionally does not query the Actions API; it trusts that pushed CI-qualified tag and performs artifact construction, source-revision metadata, checksums, checksum-safe crates.io source-package publication, GHCR upload, GitHub Release publication, and exact repository-version/tag validation. It does not repeat CI qualification or the source lint/test suite as a second authority.
 
 Release deliverables are:
 
 - `owlmux-server` archives for supported Server targets;
 - `owlmux-relay` archives for qualified target platforms;
 - `ghcr.io/owlfoundry/owlmux` Server image tags;
+- `owlmux-server` and `owlmux-relay` crates.io source packages;
 - checksums and release notes;
 - the independently deployed documentation Worker.
 
-The Server is an application artifact, not a reusable crates.io library.
+Server and Relay remain application artifacts rather than reusable library APIs. The Server source package contains embedded migrations and generated protocol bindings but not the Web build, so the complete qualified Server deployment artifact remains the fixed-version image or release archive.
 
 ## 16. Change threshold
 

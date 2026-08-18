@@ -150,15 +150,15 @@ mod tests {
 
     #[test]
     fn shared_fixtures_match_local_closed_types() {
-        let setup = include_str!("../../../contracts/relay/v1/fixtures/setup.json");
+        let setup = include_str!("../fixtures/relay/setup.json");
         let value: serde_json::Value = serde_json::from_str(setup).expect("fixture");
         assert_eq!(value["protocol"], VERSION);
-        let open = include_str!("../../../contracts/relay/v1/fixtures/open-stream.json");
+        let open = include_str!("../fixtures/relay/open-stream.json");
         assert!(matches!(
             serde_json::from_str::<ServerFrame>(open).expect("open fixture"),
             ServerFrame::OpenStream { stream_id: 1 }
         ));
-        let unknown = include_str!("../../../contracts/relay/v1/fixtures/unknown-field.json");
+        let unknown = include_str!("../fixtures/relay/unknown-field.json");
         assert!(serde_json::from_str::<ServerFrame>(unknown).is_err());
     }
 }

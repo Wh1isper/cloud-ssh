@@ -1,6 +1,6 @@
 {
   "name": "@owlmux/web",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "OwlMux web application",
   "license": "BSD-3-Clause",

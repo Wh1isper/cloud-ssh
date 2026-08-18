@@ -62,6 +62,31 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test Rust sources
         run: cargo test --workspace --all-features --locked
+      - name: Verify crates.io source packages
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          cargo package --locked --no-verify --package owlmux-server --package owlmux-relay
+          mkdir "$RUNNER_TEMP/owlmux-packages"
+          tar -xzf "target/package/owlmux-server-$version.crate" --directory "$RUNNER_TEMP/owlmux-packages"
+          tar -xzf "target/package/owlmux-relay-$version.crate" --directory "$RUNNER_TEMP/owlmux-packages"
+          server_package="$RUNNER_TEMP/owlmux-packages/owlmux-server-$version"
+          relay_package="$RUNNER_TEMP/owlmux-packages/owlmux-relay-$version"
+          test -f "$server_package/LICENSE"
+          test -f "$server_package/fixtures/attachment/auth.json"
+          test -f "$server_package/migrations/0003_cluster_membership.sql"
+          test -f "$relay_package/LICENSE"
+          test -f "$relay_package/fixtures/relay/open-stream.json"
+          cargo test --locked --all-features --no-run \
+            --manifest-path "$server_package/Cargo.toml" \
+            --target-dir "$RUNNER_TEMP/owlmux-package-target"
+          cargo test --locked --all-features --no-run \
+            --manifest-path "$relay_package/Cargo.toml" \
+            --target-dir "$RUNNER_TEMP/owlmux-package-target"
+          cargo build --locked \
+            --manifest-path "$server_package/Cargo.toml" \
+            --target-dir "$RUNNER_TEMP/owlmux-package-target"
+          strings "$RUNNER_TEMP/owlmux-package-target/debug/owlmux-server" > "$RUNNER_TEMP/owlmux-server.strings"
+          grep -Fq "$version+$GITHUB_SHA" "$RUNNER_TEMP/owlmux-server.strings"
       - name: Build both release binaries
         run: cargo build --release --locked --package owlmux-server --package owlmux-relay
       - name: Verify Relay glibc baseline

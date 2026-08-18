@@ -2,7 +2,7 @@
 
 OwlMux is a self-hosted terminal roaming gateway built on SSH and target-owned tmux. Target tmux owns every session, pane PTY, scrollback buffer, and child process. OwlMux provides a graphical Web client and an outbound Relay so users can reconnect without moving session ownership to public Server nodes.
 
-> **Current implementation:** The pre-release single-node and clustered product is implemented and Docker-qualified: Deployment API-key access, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, explicit active-Machine credential rebind, one-use Relay enrollment, signed Relay tunnels, accepting-ingress ownership, constrained OpenSSH, an explicit tmux session chooser, target-authoritative multi-pane xterm.js projection, the closed interactive writer surface, safe audit/metrics, and symmetric clustered routing. Browser attachments and Machine-affine invalidations may enter any coherent node and use at most one fresh challenge-authenticated internal TLS/WSS hop to the Relay-owning node. Node join, owner loss, stale endpoints, local TLS-identity/configuration rejection, exact-owner invalidation under cross-node Relay reconnect, lease-expiry recovery, cold API/configuration rotation, and target tmux survival have real acceptance evidence. Release qualification covers the documented Linux x86_64, tmux 3.2a/3.3a/3.5a/3.7b, `bash`/`dash`, single-node, clustered, Browser, dependency-audit, and production-image paths. Version `0.0.1` is the initial tag-driven, CI-published evaluation release. No version is supported for production terminal access, and no broader platform claim is implied.
+> **Current implementation:** The pre-release single-node and clustered product is implemented and Docker-qualified: Deployment API-key access, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, explicit active-Machine credential rebind, one-use Relay enrollment, signed Relay tunnels, accepting-ingress ownership, constrained OpenSSH, an explicit tmux session chooser, target-authoritative multi-pane xterm.js projection, the closed interactive writer surface, safe audit/metrics, and symmetric clustered routing. Browser attachments and Machine-affine invalidations may enter any coherent node and use at most one fresh challenge-authenticated internal TLS/WSS hop to the Relay-owning node. Node join, owner loss, stale endpoints, local TLS-identity/configuration rejection, exact-owner invalidation under cross-node Relay reconnect, lease-expiry recovery, cold API/configuration rotation, and target tmux survival have real acceptance evidence. Release qualification covers the documented Linux x86_64, tmux 3.2a/3.3a/3.5a/3.7b, `bash`/`dash`, single-node, clustered, Browser, dependency-audit, and production-image paths. Version `0.0.1` was the initial tag-driven evaluation release. Version `0.0.2` adds Server and Relay crates.io source packages to the existing GitHub archives and fixed GHCR image and is the current evaluation release. No version is supported for production terminal access, and no broader platform claim is implied.
 
 The following diagram shows the implemented single-node and clustered topology.
 
@@ -51,6 +51,17 @@ The normative design is under [`spec/`](spec/README.md).
 - `dev` — PostgreSQL plus opt-in loopback sshd/tmux target fixtures;
 - `docs` — VitePress documentation and Cloudflare Workers configuration;
 - `spec` — accepted target product and architecture specifications.
+
+## Install and deploy
+
+Starting with version `0.0.2`, each tag-driven release publishes both runtime source packages to crates.io alongside the portable GitHub Release archives and the fixed-version GHCR Server image:
+
+```bash
+cargo install --locked owlmux-server
+cargo install --locked owlmux-relay
+```
+
+The Server crate includes embedded migrations and protocol bindings but not the React build. A source-installed Server therefore requires `OWLMUX_WEB_DIR` to point to matching Web assets from the same release. Use the qualified GHCR image or Server archive for a complete self-hosted deployment; use the Relay crate or archive on each target.
 
 ## Development
 

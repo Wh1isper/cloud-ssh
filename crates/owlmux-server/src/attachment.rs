@@ -2367,7 +2367,7 @@ mod tests {
 
     #[test]
     fn first_frame_contract_rejects_unknown_fields() {
-        let valid = include_str!("../../../contracts/attachment/v1/fixtures/auth.json");
+        let valid = include_str!("../fixtures/attachment/auth.json");
         assert!(matches!(
             decode_auth_frame(Message::Text(valid.to_owned().into())).expect("auth fixture"),
             AuthFrame::ApiKey { .. }

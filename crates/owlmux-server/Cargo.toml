@@ -2,13 +2,15 @@
 name = "owlmux-server"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Symmetric server-node foundation for OwlMux terminal roaming"
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
 keywords = ["ssh", "terminal", "tmux", "self-hosted"]
 categories = ["web-programming::http-server"]
-publish = false
+publish = true
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }

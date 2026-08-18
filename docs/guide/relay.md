@@ -4,6 +4,14 @@
 The current pre-release profiles implement one-use Relay enrollment, signed reverse transport, accepting-ingress Machine ownership, owner-routed Relay revocation/re-enrollment, constrained OpenSSH, explicit tmux session selection/creation, target-authoritative multi-pane projection, one owner-local Browser writer, and one-hop clustered remote-owner WSS routing. Relay and enrollment always remain on their accepting node.
 :::
 
+## Install Relay
+
+Starting with version `0.0.2`, install the target-side binary from crates.io or use the matching portable archive attached to the GitHub release:
+
+```bash
+cargo install --locked owlmux-relay
+```
+
 ## Why Relay exists
 
 A target machine may not have a public address or inbound firewall rule. OwlMux Relay opens an authenticated outbound WebSocket connection to one Deployment origin. Production deployments terminate TLS and normally expose it over TCP 443.

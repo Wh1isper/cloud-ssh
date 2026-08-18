@@ -19,6 +19,16 @@ The current single-node and clustered profiles implement:
 
 The default `single-node` profile uses the same owner application boundary without an internal hop. The explicit `clustered` profile requires one complete internal TLS configuration and a distinct shared cluster key.
 
+## Install from crates.io
+
+Install the Server binary from the published source package with the locked dependency graph recorded in that package:
+
+```bash
+cargo install --locked owlmux-server
+```
+
+The crate contains the embedded PostgreSQL migrations and generated protocol bindings, but it does not embed the React application. Set `OWLMUX_WEB_DIR` to the matching Web assets from the same OwlMux GitHub release. The qualified Server image or release archive remains the recommended complete deployment artifact.
+
 ## Release archive
 
 The official Server archive contains the binary, the exact qualified Web build in `web/`, reviewed contracts, embedded-migration source files, and `SOURCE_REVISION`. Set `OWLMUX_WEB_DIR` to the extracted `web/` directory when running the archive outside the production container. Other Deployment, PostgreSQL, secret, TLS, and runtime-root configuration remains explicit as documented in the deployment guide.

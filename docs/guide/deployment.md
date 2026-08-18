@@ -4,7 +4,9 @@
 
 Start with the default `single-node` profile unless one Server process and host are demonstrably insufficient. It runs the complete product, uses the local-owner fast path, and needs only PostgreSQL plus four Deployment values. The `clustered` profile adds symmetric capacity, but also requires internal TLS, a shared cluster key, per-node certificates and URLs, and coordinated cold configuration changes. It is not required for durability: target tmux owns terminal sessions in both profiles.
 
-The production image runs one unprivileged `owlmux-server` process, includes the exact Web build, and listens on `0.0.0.0:8080`. Build and smoke-test the current source image with `make docker-build`. `ghcr.io/owlfoundry/owlmux:0.0.1` is the initial immutable evaluation image; the moving `:dev` tag follows the latest CI-qualified `main` and should not be used as a deployment pin.
+The production image runs one unprivileged `owlmux-server` process, includes the exact Web build, and listens on `0.0.0.0:8080`. Build and smoke-test the current source image with `make docker-build`. `ghcr.io/owlfoundry/owlmux:0.0.2` is the current immutable evaluation image; the moving `:dev` tag follows the latest CI-qualified `main` and should not be used as a deployment pin.
+
+Starting with version `0.0.2`, `cargo install --locked owlmux-server` installs the Server from its crates.io source package. That package contains embedded migrations and generated protocol bindings but does not embed the React build, so `OWLMUX_WEB_DIR` must point to matching Web assets from the same GitHub release. The fixed-version GHCR image or Server archive remains the complete qualified deployment artifact.
 
 ## Single-node container deployment
 
@@ -32,7 +34,7 @@ def random_value() -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
 
 
-print("OWLMUX_IMAGE=ghcr.io/owlfoundry/owlmux:0.0.1")
+print("OWLMUX_IMAGE=ghcr.io/owlfoundry/owlmux:0.0.2")
 print("OWLMUX_PUBLIC_ORIGIN=https://terminal.example.com")
 print(f"OWLMUX_POSTGRES_PASSWORD={random_value()}")
 print(f"OWLMUX_API_KEY=owlmux_sk_v1_{random_value()}")

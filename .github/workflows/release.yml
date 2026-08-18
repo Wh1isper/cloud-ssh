@@ -17,7 +17,9 @@ jobs:
   publish:
     name: Publish release
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    environment:
+      name: Release
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
@@ -62,6 +64,16 @@ jobs:
             echo "image-tag=${version//+/_}"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
+      - name: Set up Rust for crates.io
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Package crates.io sources
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          cargo package --locked --no-verify --package owlmux-server --package owlmux-relay
+          test -f "target/package/owlmux-server-$VERSION.crate"
+          test -f "target/package/owlmux-relay-$VERSION.crate"
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -142,6 +154,94 @@ jobs:
             --tag "$image:$IMAGE_TAG" \
             .
           scripts/docker/smoke-server-image.sh "$image:$IMAGE_TAG"
+      - name: Publish crates.io packages
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RUSTUP_TOOLCHAIN: 1.97.1
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN"
+          mkdir -p "$RUNNER_TEMP/owlmux-crates"
+
+          query_crate() {
+            local package="$1"
+            local response="$RUNNER_TEMP/owlmux-crates/$package.json"
+            CRATE_HTTP_STATUS="$(curl \
+              --silent \
+              --show-error \
+              --output "$response" \
+              --write-out '%{http_code}' \
+              --user-agent "owlmux-release/$VERSION (+$GITHUB_SERVER_URL/$GITHUB_REPOSITORY)" \
+              "https://crates.io/api/v1/crates/$package/$VERSION")"
+            CRATE_RESPONSE="$response"
+          }
+
+          verify_published_checksum() {
+            local package="$1"
+            local archive="target/package/$package-$VERSION.crate"
+            local expected
+            local published
+            expected="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            published="$(jq --exit-status --raw-output '.version.checksum' "$CRATE_RESPONSE")"
+            if [[ "$published" != "$expected" ]]; then
+              echo "::error::$package $VERSION exists with checksum $published, expected $expected"
+              return 1
+            fi
+          }
+
+          packages=(owlmux-server owlmux-relay)
+          for package in "${packages[@]}"; do
+            query_crate "$package"
+            case "$CRATE_HTTP_STATUS" in
+              200)
+                verify_published_checksum "$package"
+                touch "$RUNNER_TEMP/owlmux-crates/$package.published"
+                ;;
+              404)
+                ;;
+              *)
+                cat "$CRATE_RESPONSE"
+                echo "::error::crates.io returned HTTP $CRATE_HTTP_STATUS for $package $VERSION"
+                exit 1
+                ;;
+            esac
+          done
+
+          for package in "${packages[@]}"; do
+            if [[ -f "$RUNNER_TEMP/owlmux-crates/$package.published" ]]; then
+              echo "$package $VERSION is already published with the exact release checksum"
+              continue
+            fi
+            publish_status=0
+            cargo publish \
+              --locked \
+              --no-verify \
+              --registry crates-io \
+              --package "$package" || publish_status=$?
+
+            published=false
+            for _ in {1..30}; do
+              query_crate "$package"
+              if [[ "$CRATE_HTTP_STATUS" == 200 ]]; then
+                verify_published_checksum "$package"
+                published=true
+                break
+              fi
+              if [[ "$CRATE_HTTP_STATUS" != 404 ]]; then
+                cat "$CRATE_RESPONSE"
+                echo "::error::crates.io returned HTTP $CRATE_HTTP_STATUS while verifying $package $VERSION"
+                exit 1
+              fi
+              sleep 2
+            done
+            if [[ "$published" != true ]]; then
+              echo "::error::$package $VERSION was not visible on crates.io after cargo publish status $publish_status"
+              exit 1
+            fi
+            if [[ "$publish_status" -ne 0 ]]; then
+              echo "::warning::cargo publish exited with status $publish_status, but crates.io contains the exact package checksum"
+            fi
+          done
       - name: Log in to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -150,7 +250,9 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository }}
           IMAGE_TAG: ${{ steps.release.outputs.image-tag }}
-        run: docker push "${IMAGE,,}:$IMAGE_TAG"
+          REVISION: ${{ steps.release.outputs.revision }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: scripts/release/publish-server-image.sh "${IMAGE,,}:$IMAGE_TAG" "$VERSION" "$REVISION"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -159,12 +261,10 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "$RELEASE_TAG already has a GitHub Release; preserving it"
-            exit 0
-          fi
-          args=(--verify-tag --title "OwlMux $VERSION" --generate-notes)
-          if [[ "$PRERELEASE" == true ]]; then
-            args+=(--prerelease --latest=false)
-          fi
-          gh release create "$RELEASE_TAG" dist/owlmux-*.tar.gz dist/SHA256SUMS "${args[@]}"
+          scripts/release/publish-github-release.sh \
+            "$RELEASE_TAG" \
+            "$VERSION" \
+            "$PRERELEASE" \
+            dist/owlmux-server-*.tar.gz \
+            dist/owlmux-relay-*.tar.gz \
+            dist/SHA256SUMS

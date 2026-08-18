@@ -14,6 +14,32 @@ ATTACHMENT_ROOT = ROOT / "contracts" / "attachment" / "v1"
 INTERNAL_ROOT = ROOT / "contracts" / "internal" / "v1"
 RUST_OUTPUT = ROOT / "crates" / "owlmux-server" / "src" / "generated" / "contracts.rs"
 TS_OUTPUT = ROOT / "apps" / "web" / "src" / "generated" / "contracts.ts"
+PUBLISHED_FIXTURES = (
+    (
+        ATTACHMENT_ROOT / "fixtures" / "auth.json",
+        ROOT / "crates" / "owlmux-server" / "fixtures" / "attachment" / "auth.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "setup.json",
+        ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "setup.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "unknown-field.json",
+        ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "unknown-field.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "setup.json",
+        ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "setup.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "open-stream.json",
+        ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "open-stream.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "unknown-field.json",
+        ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "unknown-field.json",
+    ),
+)
 
 
 def load_json(name: str, root: Path = CONTRACT_ROOT) -> dict[str, Any]:
@@ -272,6 +298,9 @@ def main() -> int:
         render_typescript(manifest, status, error, control, attachment_manifest)
     )
     ok = update(TS_OUTPUT, typescript, args.check) and ok
+    for source, destination in PUBLISHED_FIXTURES:
+        fixture = source.read_text(encoding="utf-8")
+        ok = update(destination, fixture, args.check) and ok
     return 0 if ok else 1
 
 

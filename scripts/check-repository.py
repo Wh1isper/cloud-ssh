@@ -38,8 +38,12 @@ REQUIRED = (
     "README.md",
     "apps/web/package.json",
     "crates/owlmux-relay/Cargo.toml",
+    "crates/owlmux-relay/LICENSE",
     "crates/owlmux-server/Cargo.toml",
+    "crates/owlmux-server/LICENSE",
     "docs/wrangler.jsonc",
+    "scripts/release/publish-github-release.sh",
+    "scripts/release/publish-server-image.sh",
     "spec/README.md",
 )
 TEXT_SUFFIXES = {
@@ -108,6 +112,12 @@ def main() -> int:
     for required in REQUIRED:
         if not (ROOT / required).is_file():
             failures.append(f"missing required file: {required}")
+
+    root_license = (ROOT / "LICENSE").read_bytes()
+    for relative in ("crates/owlmux-server/LICENSE", "crates/owlmux-relay/LICENSE"):
+        packaged_license = ROOT / relative
+        if packaged_license.is_file() and packaged_license.read_bytes() != root_license:
+            failures.append(f"packaged license is stale: {relative}")
 
     for path in sorted(ROOT.rglob("*")):
         relative = path.relative_to(ROOT)

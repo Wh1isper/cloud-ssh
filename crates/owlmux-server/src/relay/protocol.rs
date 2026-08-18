@@ -147,12 +147,12 @@ mod tests {
 
     #[test]
     fn fixtures_are_closed_and_versioned() {
-        let setup = include_str!("../../../../contracts/relay/v1/fixtures/setup.json");
+        let setup = include_str!("../../fixtures/relay/setup.json");
         assert!(matches!(
             serde_json::from_str::<ClientFrame>(setup).expect("setup fixture"),
             ClientFrame::Setup { protocol: 1, .. }
         ));
-        let unknown = include_str!("../../../../contracts/relay/v1/fixtures/unknown-field.json");
+        let unknown = include_str!("../../fixtures/relay/unknown-field.json");
         assert!(serde_json::from_str::<ClientFrame>(unknown).is_err());
         assert_eq!(crate::generated::contracts::RELAY_PROTOCOL_VERSION, VERSION);
         assert_eq!(
