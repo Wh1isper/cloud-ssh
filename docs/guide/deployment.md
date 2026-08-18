@@ -191,6 +191,80 @@ Mount certificate files read-only and keep the internal listener reachable only 
 
 The cluster key authenticates configuration proofs and fresh Browser/API owner-WSS hops only. It never substitutes for the Deployment API key, Relay identity, SSH credential, or SSH encryption key. One configuration proof commits the exact build, epoch/profile, authority-key digests, public origin, protocol/schema generations, and bounds; a same-epoch mismatch fails registration instead of creating mixed Serving membership. Single-node mode rejects any cluster variable, including an empty value, so remove cluster entries entirely rather than leaving blank placeholders.
 
+### Node identity and discovery
+
+Operators do not assign a durable Node ID or configure a static peer list. Every Server process generates a fresh authority-bearing incarnation UUID at startup. `OWLMUX_NODE_NAME` is only a diagnostic label and never supplies authority. The process registers its exact incarnation, advertised `OWLMUX_INTERNAL_URL`, lease, build, and configuration proof in PostgreSQL. A Machine owner row references that exact incarnation UUID.
+
+When an ingress node resolves a remote Machine owner, it reads the owner incarnation from PostgreSQL, then reads that incarnation's registered internal WSS URL and lease-valid configuration. TLS validates the advertised hostname against the Deployment-private CA; a fresh cluster-HMAC exchange binds the source incarnation, destination incarnation, Machine, configuration, route, and local deadline. PostgreSQL therefore supplies membership discovery without a separate peers file, Consul, etcd, Redis, or internal load balancer.
+
+A container restart may reuse its service DNS name, certificate, and internal URL, but it always receives a new incarnation UUID. If a request for an old incarnation reaches the replacement process, the destination-incarnation challenge does not match and the route fails closed. The new process cannot impersonate the old owner; Relay recovery must wait for explicit release or lease expiry and then claim a higher Machine connection epoch.
+
+### Docker Compose node addressing
+
+Compose deployments should define one explicit service per Server node so each live node has a unique service DNS name, advertised URL, and node-specific certificate. The following cluster-specific fragment replaces the single `server` service in the baseline Compose file while retaining its `postgres` service and durable volume:
+
+```yaml
+x-cluster-environment: &cluster-environment
+    OWLMUX_PROFILE: clustered
+    OWLMUX_PUBLIC_ORIGIN: ${OWLMUX_PUBLIC_ORIGIN:?set OWLMUX_PUBLIC_ORIGIN}
+    OWLMUX_DATABASE_URL: postgresql://owlmux:${OWLMUX_POSTGRES_PASSWORD}@postgres:5432/owlmux
+    OWLMUX_API_KEY: ${OWLMUX_API_KEY:?set OWLMUX_API_KEY}
+    OWLMUX_SSH_KEY_ENCRYPTION_KEY: ${OWLMUX_SSH_KEY_ENCRYPTION_KEY:?set OWLMUX_SSH_KEY_ENCRYPTION_KEY}
+    OWLMUX_CLUSTER_KEY: ${OWLMUX_CLUSTER_KEY:?set OWLMUX_CLUSTER_KEY}
+    OWLMUX_CONFIG_EPOCH: "1"
+    OWLMUX_INTERNAL_ADDR: 0.0.0.0:8443
+    OWLMUX_INTERNAL_TLS_CA: /run/owlmux/tls/ca.crt
+
+services:
+    server-a:
+        image: ${OWLMUX_IMAGE:?set OWLMUX_IMAGE}
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+        environment:
+            <<: *cluster-environment
+            OWLMUX_NODE_NAME: server-a
+            OWLMUX_INTERNAL_URL: wss://server-a:8443/internal/v1/owner
+            OWLMUX_INTERNAL_TLS_CERT: /run/owlmux/tls/server.crt
+            OWLMUX_INTERNAL_TLS_KEY: /run/owlmux/tls/server.key
+        volumes:
+            - ./tls/ca.crt:/run/owlmux/tls/ca.crt:ro
+            - ./tls/server-a.crt:/run/owlmux/tls/server.crt:ro
+            - ./tls/server-a.key:/run/owlmux/tls/server.key:ro
+        tmpfs:
+            - /tmp/owlmux-ssh:uid=10001,gid=10001,mode=0700
+        expose:
+            - "8080"
+            - "8443"
+
+    server-b:
+        image: ${OWLMUX_IMAGE:?set OWLMUX_IMAGE}
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+        environment:
+            <<: *cluster-environment
+            OWLMUX_NODE_NAME: server-b
+            OWLMUX_INTERNAL_URL: wss://server-b:8443/internal/v1/owner
+            OWLMUX_INTERNAL_TLS_CERT: /run/owlmux/tls/server.crt
+            OWLMUX_INTERNAL_TLS_KEY: /run/owlmux/tls/server.key
+        volumes:
+            - ./tls/ca.crt:/run/owlmux/tls/ca.crt:ro
+            - ./tls/server-b.crt:/run/owlmux/tls/server.crt:ro
+            - ./tls/server-b.key:/run/owlmux/tls/server.key:ro
+        tmpfs:
+            - /tmp/owlmux-ssh:uid=10001,gid=10001,mode=0700
+        expose:
+            - "8080"
+            - "8443"
+```
+
+Issue `server-a.crt` with `DNS:server-a` in its subject alternative names and `server-b.crt` with `DNS:server-b`; sign both with the mounted private CA. Keep each private key readable by only the Server container UID and keep port `8443` on the private Compose network. The public reverse proxy distributes HTTP/WSS connections across `server-a:8080` and `server-b:8080` and removes a node when `/ready` fails.
+
+Do not use `docker compose up --scale server=3` with one shared internal URL and certificate. Compose service DNS may resolve that shared name to any replica, so a connection intended for one owner incarnation can reach another and fail the exact destination challenge. Use explicit services as above, or an orchestrator that injects a unique ordinal DNS name, advertised URL, and certificate into every replica, such as a Kubernetes StatefulSet.
+
 Public load balancing uses ordinary connection-level distribution across ready nodes. Stickiness is optional. Relay and enrollment stay on their accepting node, while Browser and Machine-affine API traffic may use at most one internal owner WSS hop. There is no live migration, placement scheduler, or automatic rebalance.
 
 ## Health, readiness, and fencing
