@@ -1,6 +1,6 @@
 {
   "name": "owlmux",
-  "version": "0.0.0-dev",
+  "version": "0.0.1",
   "private": true,
   "description": "Terminal roaming with target-owned tmux sessions",
   "license": "BSD-3-Clause",

@@ -52,7 +52,7 @@ jobs:
           revision="$(git rev-parse HEAD)"
           [[ "$(git rev-list --max-count=1 "$RELEASE_TAG")" == "$revision" ]]
           prerelease=false
-          if [[ "$version" == *-* ]]; then
+          if [[ "$version" == 0.* || "$version" == *-* ]]; then
             prerelease=true
           fi
           {

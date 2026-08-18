@@ -41,7 +41,7 @@ The following is current behavior in the pre-release single-node and clustered p
 - one route-scoped owner-local writer pointer, serialized claim/takeover, session create/refresh/select, observed window/pane selection, bounded active-pane input, authoritative writer resize, stale-writer fencing, and no replay of ambiguous mutations;
 - exact-build/config symmetric membership, clustered configuration proof, private-CA internal TLS/WSS, fresh destination-challenge HMAC, one-hop remote attachment/invalidation routing, unreachable-owner behavior, protected ambiguous-commit observation, lease-fenced multi-node recovery, and cold API/configuration rotation evidence.
 
-Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium, dependency audits, recovery exercises, and the production Server image. Publication remains tag-driven and CI-owned. No production-supported version or platform outside this explicit matrix is claimed.
+Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium, dependency audits, recovery exercises, and the production Server image. Version `0.0.1` is the initial tag-driven, CI-published evaluation release. No production-supported version or platform outside this explicit matrix is claimed.
 
 ## Design workflow
 

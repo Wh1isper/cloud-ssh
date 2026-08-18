@@ -1,7 +1,7 @@
 # Architecture
 
 ::: info Current scope
-The pre-release single-node and clustered profiles implement complete Machine/Relay lifecycle control, credential rebind, interactive tmux projection, owner-local Browser writer coordination, symmetric node membership, one-hop internal owner WSS, safe durable audit and metrics, and repeatable recovery evidence. Release qualification is complete for the documented Linux x86_64, tmux, login-shell, Browser, local/remote-owner, dependency-audit, and production-image profiles. Publication remains tag-driven and CI-owned; no production-supported release or broader platform coverage is claimed.
+The pre-release single-node and clustered profiles implement complete Machine/Relay lifecycle control, credential rebind, interactive tmux projection, owner-local Browser writer coordination, symmetric node membership, one-hop internal owner WSS, safe durable audit and metrics, and repeatable recovery evidence. Release qualification is complete for the documented Linux x86_64, tmux, login-shell, Browser, local/remote-owner, dependency-audit, and production-image profiles. Version `0.0.1` is the initial tag-driven, CI-published evaluation release; no production-supported release or broader platform coverage is claimed.
 :::
 
 ## One durable terminal owner
