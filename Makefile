@@ -5,10 +5,9 @@ DEV_COMPOSE := docker compose --file dev/compose.yml
 BUILD_REVISION := $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 
 .PHONY: install
-install: ## Install locked Rust, JavaScript, and Browser-test dependencies
+install: ## Install locked Rust and JavaScript dependencies
 	@cargo fetch --locked
 	@pnpm install --frozen-lockfile
-	@pnpm --filter @owlmux/web exec playwright install chromium
 
 .PHONY: format
 format: ## Format Rust and Web sources

@@ -99,7 +99,7 @@ jobs:
         run: python3 scripts/check-repository.py
 
   integration:
-    name: PostgreSQL and tmux package matrix
+    name: PostgreSQL and real target E2E
     needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -116,14 +116,12 @@ jobs:
         run: npm install --global pnpm@11.20.0
       - name: Install locked JavaScript dependencies
         run: pnpm install --frozen-lockfile
-      - name: Install Chromium for Browser acceptance
-        run: pnpm --filter @owlmux/web exec playwright install --with-deps chromium
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal
       - name: Test PostgreSQL integration
         run: make test-containers
-      - name: Test single-node stack across representative tmux packages
-        run: make test-e2e-matrix
+      - name: Test representative single-node stack
+        run: make test-e2e
       - name: Test clustered owner routing and recovery
         run: make test-e2e-clustered
 

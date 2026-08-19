@@ -25,14 +25,14 @@ make dev-target-status
 
 The target fixture does not install an OwlMux public key automatically. The target administrator boundary remains explicit: copy a generated public key into `/home/owlmux/.ssh/authorized_keys`, create a Machine with the fixture's Ed25519 host public key, and run the Relay inside the target network namespace.
 
-The repeatable acceptance target performs that setup in an isolated Compose project, runs both versioned Node protocol clients and real Chromium, and removes its volumes afterward. The matrix target repeats the same path across the minimum, maintained distribution packages, `bash`/`dash`, and a checksum-pinned current upstream release:
+The repeatable acceptance target performs that setup in an isolated Compose project, runs versioned attachment protocol clients, and removes its volumes afterward. The opt-in matrix repeats the target compatibility path across the minimum, maintained distribution packages, `bash`/`dash`, and a checksum-pinned current upstream release:
 
 ```bash
 make test-e2e
 make test-e2e-matrix
 ```
 
-It verifies clean Deployment initialization, enrollment-token disconnect recovery and replacement, signed Relay authentication, real OpenSSH proof, owner claim, credential retirement locking, explicit tmux chooser, target-authoritative two-pane projection, a four-pane continuous-token snapshot/live cutover stress case, Chromium/xterm rendering under the product CSP, bounded binary live output, same-control projection refresh, graceful route replacement, active re-enrollment, zero-session behavior, reload key clearing, PostgreSQL-triggered lease hard fencing, and target tmux survival. The compatibility matrix covers Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with `dash`, Debian 13 tmux 3.5a, and SHA-256-pinned upstream tmux 3.7b built by `dev/target-upstream.Dockerfile`.
+It verifies Deployment initialization, enrollment recovery, signed Relay authentication, real OpenSSH proof, owner claim, credential locking, tmux projection and writer operations, route replacement, hard fencing, and target tmux survival. The compatibility matrix covers Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with `dash`, Debian 13 tmux 3.5a, and SHA-256-pinned upstream tmux 3.7b built by `dev/target-upstream.Dockerfile`.
 
 Stop local infrastructure with:
 

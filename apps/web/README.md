@@ -33,4 +33,4 @@ pnpm --filter @owlmux/web test
 pnpm --filter @owlmux/web build
 ```
 
-`make test-e2e` also launches real Chromium through Playwright and verifies the served product CSP/security headers, `Open OwlMux`, the Workspaces/Hosts/Credentials routes, React dialogs and safe XSS-sensitive Host rendering, mutation-transport ambiguity lock/refresh, page-memory search and tabs, same-page and mobile writer takeover without renderer rollback, target-authoritative multi-pane xterm rendering, automatic viewport resize, writer input, observer geometry, target-observed read-only/writer client flags, stale-writer rejection, explicit logout, absence of unexpected Browser runtime errors, and reload-time API-key/tab clearing against the live Relay/OpenSSH/tmux stack.
+`make test-e2e` exercises the live attachment protocol against real PostgreSQL, Relay, OpenSSH, and target tmux without browser automation.

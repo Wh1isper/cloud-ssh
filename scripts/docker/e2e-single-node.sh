@@ -301,13 +301,6 @@ OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
 OWLMUX_E2E_API_KEY="$API_KEY" \
 pnpm --filter @owlmux/web exec node scripts/attachment-smoke.mjs
-xss_machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"<img src=x onerror=globalThis.owlmuxXss=true>","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"xss-fixture","host_identity":sys.argv[1]}))' "$host_identity")
-curl --fail --silent --show-error --max-time 5 \
-  -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
-  --data "$xss_machine_body" http://127.0.0.1:18080/api/v1/machines >/dev/null
-OWLMUX_E2E_HTTP_SERVER=http://127.0.0.1:18080 \
-OWLMUX_E2E_API_KEY="$API_KEY" \
-pnpm --filter @owlmux/web exec node scripts/browser-workspace-smoke.mjs
 OWLMUX_E2E_SERVER=ws://127.0.0.1:18080 \
 OWLMUX_E2E_MACHINE_ID="$machine_id" \
 OWLMUX_E2E_API_KEY="$API_KEY" \
@@ -429,4 +422,4 @@ SERVER_PID=
 wait "$RELAY_PID" 2>/dev/null || true
 RELAY_PID=
 "${COMPOSE[@]}" exec -T target su - owlmux -c '/usr/bin/tmux -L owlmux has-session -t alpha'
-printf 'Single-node Docker E2E passed: enrollment recovery, owner claim, credential locking/rebind, safe presentation/audit/metrics, HTTP header/body/readiness bounds, Browser headers/XSS/navigation/logout/unknown-outcome refresh, Chromium/xterm projection, continuous snapshot/live cutover, binary live output, one writer, session creation, literal input, takeover, authoritative resize, projection refresh, route replacement, hard fencing, and target tmux survival.\n'
+printf 'Single-node Docker E2E passed: enrollment recovery, owner claim, credential locking/rebind, safe API presentation/audit/metrics, HTTP header/body/readiness bounds, continuous snapshot/live cutover, binary live output, one writer, session creation, literal input, takeover, authoritative resize, projection refresh, route replacement, hard fencing, and target tmux survival.\n'

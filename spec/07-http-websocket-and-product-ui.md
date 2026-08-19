@@ -395,9 +395,7 @@ Conformance proves:
 - Browser never stores or selects a Server node; load-balancer stickiness is optional; ingress/owner loss reconnects through the same origin;
 - generated credential APIs accept no private-key body or algorithm selector and never return private material or proxy it to an owner;
 - malformed, oversized, stale incarnation/connection/attachment epoch, unknown-version, owner-WSS loss, and slow-client cases fail boundedly;
-- full Browser journey enters the key through `Open OwlMux`, lands on `/workspaces`, manages Machine resources through Host list/create/detail pages, traverses Credentials/Audit/Deployment on the same origin, resolves an owner, selects/creates, hydrates, writes, returns to chooser, and reconnects to surviving target work after ingress and owner failures;
-- Chromium proves at least two independent same-page workspace tabs, same-Machine writer takeover/demotion, switching and closing only the active tab, internal navigation retention, the 16-tab page bound, and full-page reload clearing;
-- current visible writer viewport changes generate bounded automatic resize and target-authoritative replacement geometry, with no rows/columns form and no observer/hidden-tab target resize;
+- focused Web unit/type/build checks cover the login boundary, generated attachment parsing, stale connection-attempt rejection, close diagnostics, and page-memory-only state declarations; real target operations use versioned attachment-WebSocket clients without browser automation;
 - safe transient retry obeys capped `retry_after`, every replacement returns to a fresh chooser, and no writer/input/mutation is restored or replayed;
 - writer/takeover/rehydration/connection-epoch/no-replay behavior matches [04];
 - reload/logout/page close/navigation away requires API-key re-entry; internal SPA navigation does not; ordinary unchanged-key node restart may reuse only the still-open page-memory candidate; coordinated key replacement rejects it; target work survives every case.

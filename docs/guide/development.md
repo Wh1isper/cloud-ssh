@@ -15,12 +15,12 @@ spec/                 normative complete-product specifications
 ## Commands
 
 ```bash
-make install            # install locked Cargo, pnpm, and Chromium test dependencies
+make install            # install locked Cargo and pnpm dependencies
 make format             # format Rust and Web sources
 make check              # generated contracts, lint, type-check, Web/docs, repository, and Compose checks
 make test               # run Rust and Web tests
 make test-containers    # require and run isolated PostgreSQL tests
-make test-e2e           # real Relay/OpenSSH/tmux acceptance with Node clients and Chromium
+make test-e2e           # real Relay/OpenSSH/tmux acceptance with protocol clients
 make test-e2e-matrix    # add tmux 3.2a/3.3a/3.5a/current 3.7b and bash/dash coverage
 make build              # build Web plus both release binaries
 make dev                # build Web and run the single-node Server
@@ -42,11 +42,11 @@ The following is current behavior in the pre-release single-node and clustered p
 - one route-scoped owner-local writer pointer across same-Machine tabs, serialized claim/takeover, session create/refresh/select, observed window/pane selection, bounded active-pane input, visible-writer automatic viewport resize with no rows/columns form, stale-writer fencing, and no replay of ambiguous mutations;
 - exact-build/config symmetric membership, clustered configuration proof, private-CA internal TLS/WSS, fresh destination-challenge HMAC, one-hop remote attachment/invalidation routing, unreachable-owner behavior, protected ambiguous-commit observation, lease-fenced multi-node recovery, and cold API/configuration rotation evidence.
 
-Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium coverage of the terminal-first routes/page-memory tabs/automatic resize/same-page and mobile takeover, dependency audits, recovery exercises, and the production Server image. Version `0.0.1` was the initial tag-driven evaluation release. Version `0.0.2` added independently test-compiled Server and Relay crates.io source packages. Version `0.0.3` is the current evaluation release and adds the qualified terminal-first Web shell, bounded page-memory workspaces, same-Host tab coordination, and automatic visible-writer resize. No production-supported version or platform outside this explicit matrix is claimed.
+Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Web source/build checks, dependency audits, recovery exercises, and the production Server image. Version `0.0.1` was the initial tag-driven evaluation release. Version `0.0.2` added independently test-compiled Server and Relay crates.io source packages. Version `0.0.3` is the current evaluation release and adds the qualified terminal-first Web shell, bounded page-memory workspaces, same-Host tab coordination, and automatic visible-writer resize. No production-supported version or platform outside this explicit matrix is claimed.
 
 ## Design workflow
 
-`spec/` is normative. Public docs distinguish current tested behavior from accepted target design. A capability becomes current behavior only after its reviewed versioned contract, durable invariants, implementation, and real acceptance evidence land together. CI runs production JavaScript audit, PostgreSQL integration, the single-node and two-node clustered Docker E2E, the production-image content smoke, and the complete Chromium/tmux matrix against Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a with `dash`, Debian 13 tmux 3.5a, and checksum-pinned current upstream tmux 3.7b. CI also reports live RustSec advisory findings, but advisory-database changes alone do not block source/build or documentation delivery; supported findings are still triaged and fixed. The all-target RSA graph-absence constraint remains a hard gate, and the sole RustSec ignore is documented lock-only optional metadata absent from that graph.
+`spec/` is normative. Public docs distinguish current tested behavior from accepted target design. A capability becomes current behavior only after its reviewed versioned contract, durable invariants, implementation, and focused real acceptance evidence land together. CI runs production JavaScript audit, PostgreSQL integration, one representative single-node Docker E2E, the two-node clustered Docker E2E, and the production-image content smoke. The broader tmux/login-shell matrix remains an opt-in compatibility command rather than repeating the complete product path on every change. CI also reports live RustSec advisory findings, but advisory-database changes alone do not block source/build or documentation delivery; supported findings are still triaged and fixed. The all-target RSA graph-absence constraint remains a hard gate, and the sole RustSec ignore is documented lock-only optional metadata absent from that graph.
 
 Keep the central invariant visible in every change:
 
