@@ -24,6 +24,7 @@ import type {
   ErrorCode,
   ErrorResponse,
   MachineCreated,
+  MachineDetail,
   MachineSummary,
 } from "./generated/contracts";
 
@@ -150,6 +151,7 @@ export interface ApiClient {
   disableMachine(machineId: string): Promise<void>;
   dispose(): void;
   issueEnrollment(machineId: string): Promise<EnrollmentTokenResponse>;
+  getMachine(machineId: string): Promise<MachineDetail>;
   rebindMachine(machineId: string, credentialId: string): Promise<void>;
   reEnrollMachine(machineId: string): Promise<void>;
   renameMachine(machineId: string, alias: string): Promise<void>;
@@ -528,6 +530,7 @@ export function createApiClient(candidate: string): ApiClient {
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/enrollment-token`, {
         method: "POST",
       }),
+    getMachine: (machineId) => request(`/api/v1/machines/${encodeURIComponent(machineId)}`),
     rebindMachine: (machineId, credentialId) =>
       request(`/api/v1/machines/${encodeURIComponent(machineId)}/ssh-credential`, {
         method: "PATCH",

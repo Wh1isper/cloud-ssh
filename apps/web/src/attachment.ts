@@ -57,6 +57,8 @@ export type AttachmentErrorCode =
   | "unauthenticated"
   | "invalid_origin"
   | "machine_unavailable"
+  | "temporarily_unavailable"
+  | "owner_unreachable"
   | "stale_selection"
   | "stale_epoch"
   | "writer_required"
@@ -468,6 +470,8 @@ export function parseAttachmentFrame(input: unknown): AttachmentFrame {
         "unauthenticated",
         "invalid_origin",
         "machine_unavailable",
+        "temporarily_unavailable",
+        "owner_unreachable",
         "stale_selection",
         "stale_epoch",
         "writer_required",

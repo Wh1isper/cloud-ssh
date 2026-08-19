@@ -123,6 +123,19 @@ export interface MachineCredentialInput {
   ssh_credential_id: string;
 }
 
+export interface MachineDetail {
+  alias: string;
+  host_identity: string;
+  lifecycle: "pending" | "verifying" | "active" | "disabled";
+  machine_id: string;
+  reachability:
+    "unknown" | "connecting" | "reachable" | "temporarily_unavailable" | "owner_unreachable";
+  ssh_credential_id: string;
+  target_account: string;
+  tmux_path: string;
+  tmux_socket_identity: string;
+}
+
 export interface MachineSummary {
   alias: string;
   lifecycle: "pending" | "verifying" | "active" | "disabled";

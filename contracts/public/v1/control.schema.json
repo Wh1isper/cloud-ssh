@@ -97,6 +97,21 @@
       },
       "required": ["api_authenticated_requests_total", "api_auth_rejections_total", "api_mutation_overloads_total", "node_ready", "owner_absent_resolutions_total", "owner_local_resolutions_total", "owner_remote_resolutions_total", "owner_resolution_failures_total"], "type": "object"
     },
+    "MachineDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": { "type": "string" },
+        "host_identity": { "maxLength": 2048, "minLength": 32, "pattern": "^ssh-ed25519 ", "type": "string" },
+        "lifecycle": { "enum": ["pending", "verifying", "active", "disabled"] },
+        "machine_id": { "format": "uuid", "type": "string" },
+        "reachability": { "enum": ["unknown", "connecting", "reachable", "temporarily_unavailable", "owner_unreachable"] },
+        "ssh_credential_id": { "format": "uuid", "type": "string" },
+        "target_account": { "maxLength": 64, "minLength": 1, "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$", "type": "string" },
+        "tmux_path": { "maxLength": 256, "minLength": 1, "type": "string" },
+        "tmux_socket_identity": { "maxLength": 128, "minLength": 1, "type": "string" }
+      },
+      "required": ["alias", "host_identity", "lifecycle", "machine_id", "reachability", "ssh_credential_id", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+    },
     "MachineSummary": {
       "additionalProperties": false,
       "properties": {

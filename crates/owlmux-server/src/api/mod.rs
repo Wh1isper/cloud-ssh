@@ -556,6 +556,16 @@ struct MachineSummary {
     reachability: &'static str,
 }
 
+#[derive(Serialize)]
+struct MachineDetail {
+    #[serde(flatten)]
+    summary: MachineSummary,
+    target_account: String,
+    tmux_path: String,
+    tmux_socket_identity: String,
+    host_identity: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreateMachineInput {
@@ -597,11 +607,11 @@ async fn list_machines(
 async fn get_machine(
     State(state): State<Arc<ServerState>>,
     Path(machine_id): Path<Uuid>,
-) -> ApiResult<Json<MachineSummary>> {
+) -> ApiResult<Json<MachineDetail>> {
     relay::recover_expired_attempts(&state, Some(machine_id))
         .await
         .map_err(|_| ApiError::temporarily_unavailable())?;
-    let row = sqlx::query("SELECT m.id, m.ssh_credential_id, m.alias, m.lifecycle, EXISTS(SELECT 1 FROM machine_owners o JOIN server_nodes n ON n.incarnation_id = o.owner_incarnation_id JOIN relay_bindings b ON b.machine_id = m.id AND b.status = 'active' AND b.route_revision = m.route_revision WHERE o.machine_id = m.id AND o.route_revision = m.route_revision AND o.connection_epoch > 0 AND n.state IN ('serving', 'draining') AND n.config_epoch = $2 AND n.server_build_id = $3 AND n.relay_protocol_version = 1 AND n.lease_until > clock_timestamp()) AS owner_valid FROM machines m WHERE m.id = $1")
+    let row = sqlx::query("SELECT m.id, m.ssh_credential_id, m.alias, m.lifecycle, m.target_account, m.tmux_path, m.tmux_socket_identity, m.host_identity, EXISTS(SELECT 1 FROM machine_owners o JOIN server_nodes n ON n.incarnation_id = o.owner_incarnation_id JOIN relay_bindings b ON b.machine_id = m.id AND b.status = 'active' AND b.route_revision = m.route_revision WHERE o.machine_id = m.id AND o.route_revision = m.route_revision AND o.connection_epoch > 0 AND n.state IN ('serving', 'draining') AND n.config_epoch = $2 AND n.server_build_id = $3 AND n.relay_protocol_version = 1 AND n.lease_until > clock_timestamp()) AS owner_valid FROM machines m WHERE m.id = $1")
         .bind(machine_id)
         .bind(state.config.config_epoch())
         .bind(build::BUILD_ID)
@@ -609,7 +619,19 @@ async fn get_machine(
     let connected: bool = row
         .try_get("owner_valid")
         .map_err(|_| ApiError::internal())?;
-    machine_from_row(&row, connected).map(Json)
+    Ok(Json(MachineDetail {
+        summary: machine_from_row(&row, connected)?,
+        target_account: row
+            .try_get("target_account")
+            .map_err(|_| ApiError::internal())?,
+        tmux_path: row.try_get("tmux_path").map_err(|_| ApiError::internal())?,
+        tmux_socket_identity: row
+            .try_get("tmux_socket_identity")
+            .map_err(|_| ApiError::internal())?,
+        host_identity: row
+            .try_get("host_identity")
+            .map_err(|_| ApiError::internal())?,
+    }))
 }
 
 async fn create_machine(

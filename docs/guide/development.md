@@ -3,7 +3,7 @@
 ## Repository layout
 
 ```text
-apps/web/             React control plane and interactive xterm.js workspace
+apps/web/             same-origin terminal-first shell, Host management, workspace tabs, and xterm.js rendering
 contracts/            reviewed public, Relay v1, and attachment v1 schemas and fixtures
 crates/owlmux-server/ single-node Deployment, Relay ingress, SSH/tmux, API, and attachment runtime
 crates/owlmux-relay/  target-side enrolled reverse-connection runtime
@@ -37,11 +37,12 @@ The following is current behavior in the pre-release single-node and clustered p
 - reviewed/generated contracts, immutable typed configuration, Linux boot clock, cancellation, and bounded shutdown;
 - Deployment initialization, fenced node lease, API-key control plane, generated encrypted SSH credentials, complete Machine/Relay lifecycle transactions, active-Machine credential rebind, one-use tokens, bounded safe audit presentation, and low-cardinality metrics;
 - Relay candidate identity custody, token-only enrollment, signed activation/tunnel transcripts, bounded logical streams, actual owner claim, re-enrollment, revoke/disable fencing, and drain;
-- exact-Origin/first-frame attachment authentication, constrained OpenSSH, separate tmux client/server version and session probes, fresh explicit chooser, writer/read-only-observer control modes, target-authoritative visible-pane layout, qualified final-capture/live cutover with continuous-token stress evidence, chunked binary-safe snapshots/live output, projection refresh, and xterm.js rendering;
-- one route-scoped owner-local writer pointer, serialized claim/takeover, session create/refresh/select, observed window/pane selection, bounded active-pane input, authoritative writer resize, stale-writer fencing, and no replay of ambiguous mutations;
+- same-origin Workspaces/Hosts/Credentials/Audit/Deployment navigation, bounded page-memory workspace tabs, explicit page-lifetime authentication, and durable unknown-outcome reconciliation;
+- exact-Origin/first-frame attachment authentication, constrained OpenSSH, separate tmux client/server version and session probes, fresh explicit chooser, writer/read-only-observer control modes exposed as control/view-only UX, target-authoritative visible-pane layout, qualified final-capture/live cutover with continuous-token stress evidence, chunked binary-safe snapshots/live output, projection refresh, and xterm.js rendering;
+- one route-scoped owner-local writer pointer across same-Machine tabs, serialized claim/takeover, session create/refresh/select, observed window/pane selection, bounded active-pane input, visible-writer automatic viewport resize with no rows/columns form, stale-writer fencing, and no replay of ambiguous mutations;
 - exact-build/config symmetric membership, clustered configuration proof, private-CA internal TLS/WSS, fresh destination-challenge HMAC, one-hop remote attachment/invalidation routing, unreachable-owner behavior, protected ambiguous-commit observation, lease-fenced multi-node recovery, and cold API/configuration rotation evidence.
 
-Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium, dependency audits, recovery exercises, and the production Server image. Version `0.0.1` was the initial tag-driven evaluation release. Version `0.0.2` adds independently test-compiled Server and Relay crates.io source packages and is the current evaluation release. No production-supported version or platform outside this explicit matrix is claimed.
+Release qualification is complete for the documented pre-release Linux x86_64 profiles: local and clustered owner paths, Ubuntu 22.04 tmux 3.2a, Debian 12 tmux 3.3a under `dash`, Debian 13 tmux 3.5a, checksum-pinned upstream tmux 3.7b, Chromium coverage of the terminal-first routes/page-memory tabs/automatic resize/same-page and mobile takeover, dependency audits, recovery exercises, and the production Server image. Version `0.0.1` was the initial tag-driven evaluation release. Version `0.0.2` added independently test-compiled Server and Relay crates.io source packages. Version `0.0.3` is the current evaluation release and adds the qualified terminal-first Web shell, bounded page-memory workspaces, same-Host tab coordination, and automatic visible-writer resize. No production-supported version or platform outside this explicit matrix is claimed.
 
 ## Design workflow
 

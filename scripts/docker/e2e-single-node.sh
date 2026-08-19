@@ -366,7 +366,7 @@ printf '%s\n' "$replacement_public_key" | "${COMPOSE[@]}" exec -T target sh -c \
   'cat > /home/owlmux/.ssh/authorized_keys && chown owlmux:owlmux /home/owlmux/.ssh/authorized_keys && chmod 0600 /home/owlmux/.ssh/authorized_keys'
 machine=$(curl --fail --silent --show-error --max-time 5 \
   -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:18080/api/v1/machines/$machine_id")
-python3 -c 'import json,sys; m=json.load(sys.stdin); assert set(m) == {"machine_id","ssh_credential_id","alias","lifecycle","reachability"}; assert m["alias"] == "renamed-target" and m["ssh_credential_id"] == sys.argv[1] and m["lifecycle"] == "active"' "$replacement_credential_id" <<<"$machine"
+python3 -c 'import json,sys; m=json.load(sys.stdin); assert set(m) == {"machine_id","ssh_credential_id","alias","lifecycle","reachability","target_account","tmux_path","tmux_socket_identity","host_identity"}; assert m["alias"] == "renamed-target" and m["ssh_credential_id"] == sys.argv[1] and m["lifecycle"] == "active"; assert m["target_account"] == "owlmux" and m["tmux_path"] == "/usr/bin/tmux" and m["tmux_socket_identity"] == "owlmux" and m["host_identity"] == sys.argv[2]' "$replacement_credential_id" "$host_identity" <<<"$machine"
 route_after_rebind=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \
   --command "SELECT route_revision FROM machines WHERE id = '$machine_id'")
 credential_revision_after=$("${COMPOSE[@]}" exec -T postgres psql --username owlmux --dbname owlmux --tuples-only --no-align \

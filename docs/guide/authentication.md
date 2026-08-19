@@ -10,7 +10,7 @@ Each OwlMux Deployment uses one `OWLMUX_API_KEY` formatted as `owlmux_sk_v1_` pl
 
 Deployment is the sole human/API trust boundary. OwlMux does not subdivide it into identities, delegated grants, per-resource authorization, node-scoped grants, alternate login methods, or persistent Browser authentication state.
 
-The Browser presents one masked key field and keeps the value only in current page memory:
+The Browser presents one masked key field and one **Open OwlMux** action, then enters `/workspaces` while keeping the value only in current page memory:
 
 - every protected HTTP request sends `Authorization: Bearer` to the one Deployment origin;
 - attachment WebSocket sends the key in one bounded first authentication frame under a five-second deadline;
@@ -18,7 +18,9 @@ The Browser presents one masked key field and keeps the value only in current pa
 - no Machine lookup, owner resolution, internal owner-WSS, route, SSH, tmux, projection, or writer state is allocated before that frame succeeds;
 - Server copies the bounded authentication text into a mutable application buffer, drops the WebSocket-library frame, and clears both that complete encoded copy and the parsed key before continuing;
 - the key never enters URL, query, cookie, WebSocket subprotocol, local/session storage, IndexedDB, service worker, logs, or analytics;
-- reload, tab close, logout, or navigation clears the key and requires re-entry;
+- internal SPA navigation among Workspaces, Hosts, Credentials, Audit, and Deployment retains the key and page-memory workspace tabs;
+- reload, Browser page/tab close, logout, or navigation away clears the key and every workspace tab and requires re-entry;
+- closing one OwlMux workspace tab detaches only its Attachment and does not clear the shared page key;
 - Browser never receives or selects a Server node.
 
 If Browser or Machine-affine API ingress is not the current owner, it clears the raw key candidate and opens at most one internal WSS hop to that owner. The owner verifies exact incarnations, leases, Server build/configuration epoch, Machine route revision, and connection epoch before allocating state. One-shot API control uses typed request/result/close over the same WSS challenge mode; there is no internal HTTPS variant. Raw API-key bytes are never forwarded. Relay/enrollment never uses this hop.

@@ -132,6 +132,18 @@ describe("attachment frame parser", () => {
     expect(() => parseAttachmentFrame(oversized)).toThrow();
   });
 
+  it("accepts owner-routing availability errors", () => {
+    for (const code of ["temporarily_unavailable", "owner_unreachable"]) {
+      expect(
+        parseAttachmentFrame({
+          type: "workspace.error",
+          code,
+          message: "The current Host owner is unavailable.",
+        }),
+      ).toMatchObject({ code, type: "workspace.error" });
+    }
+  });
+
   it("accepts writer state and exact operation results", () => {
     expect(
       parseAttachmentFrame({

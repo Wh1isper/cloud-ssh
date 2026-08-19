@@ -7,7 +7,7 @@ titleTemplate: Terminal roaming with target-owned tmux
 hero:
   name: OwlMux
   text: Return to the tmux session that never left your machine
-  tagline: A self-hosted Web workspace and outbound Relay for reconnecting to target-owned terminal sessions.
+  tagline: A self-hosted terminal-first Web shell and outbound Relay for reconnecting to target-owned terminal sessions.
   actions:
     - theme: brand
       text: Understand the architecture
@@ -23,7 +23,7 @@ features:
   - title: Target-owned continuity
     details: tmux on the target machine owns session, pane, PTY, scrollback, and child-process lifetime. OwlMux never replaces that boundary.
   - title: Interactive Web roaming
-    details: The current single-node and clustered profiles render a target-authoritative multi-pane workspace and serialize one Browser writer for bounded input, resize, and closed tmux operations while other attachments observe.
+    details: Saved Hosts open into bounded page-memory workspace tabs with target-authoritative multi-pane rendering. One Attachment per Machine route has control, automatically fits its visible viewport, and performs bounded input and closed tmux operations while other attachments observe.
   - title: Outbound Relay
     details: OwlMux Relay connects outward through one Deployment origin and carries bounded logical SSH streams back to enrolled loopback sshd.
   - title: One Deployment API key
@@ -35,7 +35,7 @@ features:
 ---
 
 ::: info Current scope
-The pre-release single-node and clustered profiles are implemented and Docker-qualified: Deployment API-key access, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, active-Machine credential rebind, signed Relay tunnels, actual owner claims, constrained OpenSSH, explicit tmux session selection/creation, target-authoritative multi-pane xterm.js projection, one owner-local Browser writer, bounded mutations, safe audit/metrics, one-hop internal owner-WSS routing, and cold recovery/rotation evidence. Release qualification covers the documented Linux x86_64, tmux 3.2a/3.3a/3.5a/3.7b, `bash`/`dash`, Chromium, local/remote-owner, dependency-audit, and production-image paths. Version `0.0.1` was the initial CI-published evaluation release. Version `0.0.2` adds Server and Relay crates.io source packages and is the current evaluation release. No version is supported for production terminal access, and no broader platform coverage is claimed.
+The pre-release single-node and clustered profiles are implemented and Docker-qualified: Deployment API-key access, a same-origin Workspaces/Hosts/Credentials/Audit/Deployment shell, bounded page-memory workspace tabs, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, active-Machine credential rebind, signed Relay tunnels, actual owner claims, constrained OpenSSH, explicit tmux session selection/creation, target-authoritative multi-pane xterm.js projection, automatic visible-writer viewport resize, one owner-local Browser writer, bounded mutations, safe audit/metrics, one-hop internal owner-WSS routing, and cold recovery/rotation evidence. `Host` is the product UI name for the underlying Machine resource. Release qualification covers the documented Linux x86_64, tmux 3.2a/3.3a/3.5a/3.7b, `bash`/`dash`, Chromium, local/remote-owner, dependency-audit, and production-image paths. Version `0.0.1` was the initial CI-published evaluation release. Version `0.0.2` added Server and Relay crates.io source packages. Version `0.0.3` is the current evaluation release and adds the qualified terminal-first Web shell, bounded page-memory workspaces, same-Host tab coordination, and automatic visible-writer resize. No version is supported for production terminal access, and no broader platform coverage is claimed.
 :::
 
 ## Implemented topology and durable boundary

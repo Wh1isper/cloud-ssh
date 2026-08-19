@@ -79,9 +79,10 @@ Server node, Relay, PostgreSQL, browser, or network failure
 - **Internal owner hop** — one bounded, backpressured, non-durable WSS connection carrying an already authenticated Browser stream or one typed Machine-affine API request from ingress to the current owner.
 - **Relay** — `owlmux-relay`, a target-side outbound reverse-connection client.
 - **Target** — the host whose sshd/tmux own the interactive environment.
-- **Machine** — one fixed target SSH host/account/tmux-socket scope with replaceable Relay and credential bindings.
+- **Machine** — one fixed target SSH host/account/tmux-socket scope with replaceable Relay and credential bindings. The product UI calls this saved resource a **Host**; API, schema, database, owner, and protocol vocabulary remains Machine.
 - **SSH credential** — one reusable Deployment-owned generated Ed25519 key pair.
 - **Attachment** — one ephemeral Browser-to-Machine path that starts at session selection and opens control only after explicit choice.
+- **Workspace tab** — one non-persistent current-page UI entry with its own Attachment lifecycle, chooser/projection/renderers, and session-title hint. Multiple tabs may target one Machine but share that Machine route's single writer pointer.
 - **Projection** — one reconstructible owner-process view of observed tmux state.
 
 OwlMux models no finer-grained human identity or authorization aggregate beneath Deployment. Target terminal/process state and process leases are also outside the OwlMux domain model.

@@ -107,9 +107,11 @@ This is a source-level rule. Modules remain inside `owlmux-server` until real im
 Browser owns:
 
 - a masked Deployment API-key input held only in memory;
-- safe Machine, SSH-credential, and enrollment workflows;
+- one same-origin terminal-first shell whose Host labels map only to Machine API/domain resources;
+- safe Machine, SSH-credential, enrollment, audit, and Deployment-presentation workflows;
+- a bounded page-memory workspace-tab registry and active-tab state, with one independent Attachment lifecycle per tab;
 - graphical session, window, pane, and attachment presentation;
-- xterm.js rendering, keyboard, paste, resize, and focus interaction;
+- xterm.js rendering, keyboard, paste, focus, and current-visible-writer viewport-derived automatic resize interaction;
 - reconnect policy and atomic projection replacement;
 - local non-authoritative display preferences.
 

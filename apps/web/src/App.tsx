@@ -1,29 +1,44 @@
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
-import {
-  ApiError,
-  AuthenticationError,
-  createApiClient,
-  type ApiClient,
-  type AttachmentFrame,
-  type AttachmentPane,
-  type AttachmentSession,
-  type AttachmentSessionSummary,
-  type AttachmentWindow,
-} from "./client";
-import {
-  ATTACHMENT_MAX_DIMENSION,
-  ATTACHMENT_MAX_INPUT_BYTES,
-  PUBLIC_CONTRACT_VERSION,
-} from "./generated/contracts";
+import { ApiError, AuthenticationError, createApiClient, type ApiClient } from "./client";
+import { PUBLIC_CONTRACT_VERSION } from "./generated/contracts";
 import type {
   AuditEventSummary,
   CredentialSummary,
   DeploymentPresentation,
+  MachineDetail,
   MachineSummary,
 } from "./generated/contracts";
+import { InteractiveWorkspace } from "./workspace";
+
+interface WorkspaceTab {
+  id: string;
+  machine: MachineSummary;
+  sessionTitle: string | null;
+}
+
+interface Confirmation {
+  confirmLabel: string;
+  danger?: boolean;
+  description: string;
+  onConfirm: () => Promise<void>;
+  title: string;
+}
+
+interface TextRequest {
+  initialValue: string;
+  label: string;
+  onSubmit: (value: string) => Promise<void>;
+  submitLabel: string;
+  title: string;
+}
+
+interface EnrollmentDisclosure {
+  expiresIn: number;
+  token: string;
+}
+
+const MAX_WORKSPACE_TABS = 16;
 
 export function App() {
   const [client, setClient] = useState<ApiClient | null>(null);
@@ -58,8 +73,8 @@ export function App() {
     try {
       await next.deployment();
       setLoginError("");
+      window.history.replaceState(null, "", "/workspaces");
       setClient(next);
-      window.history.replaceState(null, "", "/machines");
     } catch (reason) {
       next.dispose();
       setLoginError(
@@ -74,16 +89,19 @@ export function App() {
     return (
       <main className="login-shell">
         <section className="login-card">
-          <p className="eyebrow">OwlMux · {PUBLIC_CONTRACT_VERSION}</p>
-          <h1>Your tmux sessions stay where they belong.</h1>
-          <p>
-            Enter the single Deployment API key. It stays only in this page's memory and is cleared
-            on reload, navigation, authentication failure, or logout.
+          <div className="brand-mark" aria-hidden="true">
+            O
+          </div>
+          <p className="section-kicker">OwlMux · {PUBLIC_CONTRACT_VERSION}</p>
+          <h1>Your target work stays where it belongs.</h1>
+          <p className="login-intro">
+            Open your saved Hosts and continue target-owned tmux sessions from this Browser.
           </p>
-          <form onSubmit={login}>
+          <form className="login-form" onSubmit={login}>
             <label htmlFor="api-key">Deployment API key</label>
             <input
               autoComplete="off"
+              autoFocus
               id="api-key"
               name="api-key"
               onChange={(event) => setCandidate(event.currentTarget.value)}
@@ -92,40 +110,58 @@ export function App() {
               type="password"
               value={candidate}
             />
-            <button type="submit">Open deployment</button>
+            <button className="button button-primary button-large" type="submit">
+              Open OwlMux
+            </button>
           </form>
-          {loginError && <p className="error-banner">{loginError}</p>}
+          <p className="memory-notice">
+            The key stays only in this page's memory. Reload, navigation away, authentication
+            failure, and logout clear it.
+          </p>
+          {loginError && (
+            <div className="error-banner" role="alert">
+              {loginError}
+            </div>
+          )}
         </section>
       </main>
     );
   }
 
-  return <ControlPlane client={client} logout={logout} />;
+  return <AuthenticatedApp client={client} logout={logout} />;
 }
 
-function ControlPlane({ client, logout }: { client: ApiClient; logout: () => void }) {
+function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () => void }) {
   const [deployment, setDeployment] = useState<DeploymentPresentation | null>(null);
   const [auditEvents, setAuditEvents] = useState<Array<AuditEventSummary>>([]);
   const [credentials, setCredentials] = useState<Array<CredentialSummary>>([]);
   const [machines, setMachines] = useState<Array<MachineSummary>>([]);
-  const [issuedToken, setIssuedToken] = useState<string | null>(null);
-  const [workspaceMachine, setWorkspaceMachine] = useState<MachineSummary | null>(null);
+  const [workspaceTabs, setWorkspaceTabs] = useState<Array<WorkspaceTab>>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [mutationPending, setMutationPending] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [resourceRevision, setResourceRevision] = useState(0);
+  const [route, setRoute] = useState(() => normalizeRoute(window.location.pathname));
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [textRequest, setTextRequest] = useState<TextRequest | null>(null);
+  const [enrollmentDisclosure, setEnrollmentDisclosure] = useState<EnrollmentDisclosure | null>(
+    null,
+  );
   const outcomeUnknownRef = useRef(false);
   const mutationPendingRef = useRef(false);
   const refreshGenerationRef = useRef(0);
-  const [loading, setLoading] = useState(true);
-  const [route, setRoute] = useState(window.location.pathname);
+  const nextWorkspaceId = useRef(0);
 
   const navigate = useCallback((path: string) => {
-    window.history.pushState(null, "", path);
-    setRoute(path);
+    const normalized = normalizeRoute(path);
+    window.history.pushState(null, "", normalized);
+    setRoute(normalized);
   }, []);
 
   useEffect(() => {
-    const onPopState = () => setRoute(window.location.pathname);
+    const onPopState = () => setRoute(normalizeRoute(window.location.pathname));
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -139,11 +175,11 @@ function ControlPlane({ client, logout }: { client: ApiClient; logout: () => voi
         outcomeUnknownRef.current = true;
         setOutcomeUnknown(true);
         setError(
-          "The durable outcome is unknown. Mutations are disabled until you refresh durable state.",
+          "The durable outcome is unknown. Management mutations are disabled until durable state is refreshed.",
         );
       } else if (reason instanceof ApiError && reason.code === "owner_unreachable") {
         setError(
-          "The valid Machine owner is unreachable. Fence or stop that node, wait for lease expiry, then retry.",
+          "The valid Host owner is unreachable. Fence or stop that Server node, wait for lease expiry, then retry.",
         );
       } else {
         setError(reason instanceof Error ? reason.message : fallback);
@@ -162,11 +198,12 @@ function ControlPlane({ client, logout }: { client: ApiClient; logout: () => voi
           client.listCredentials(),
           client.listMachines(),
         ]);
-        if (generation !== refreshGenerationRef.current) return;
+        if (generation !== refreshGenerationRef.current) return false;
         setDeployment(nextDeployment);
         setAuditEvents(nextAuditEvents);
         setCredentials(nextCredentials);
         setMachines(nextMachines);
+        setResourceRevision((revision) => revision + 1);
         if (acknowledgeUnknown) {
           outcomeUnknownRef.current = false;
           setOutcomeUnknown(false);
@@ -174,10 +211,12 @@ function ControlPlane({ client, logout }: { client: ApiClient; logout: () => voi
         } else if (!outcomeUnknownRef.current) {
           setError("");
         }
+        return true;
       } catch (reason) {
         if (generation === refreshGenerationRef.current) {
-          presentError(reason, "Control-plane refresh failed.");
+          presentError(reason, "Deployment refresh failed.");
         }
+        return false;
       } finally {
         if (generation === refreshGenerationRef.current) setLoading(false);
       }
@@ -187,13 +226,15 @@ function ControlPlane({ client, logout }: { client: ApiClient; logout: () => voi
 
   const runMutation = useCallback(
     async (operation: () => Promise<void>, fallback: string) => {
-      if (mutationPendingRef.current || outcomeUnknownRef.current) return;
+      if (mutationPendingRef.current || outcomeUnknownRef.current) return false;
       mutationPendingRef.current = true;
       setMutationPending(true);
       try {
         await operation();
+        return true;
       } catch (reason) {
         presentError(reason, fallback);
+        return false;
       } finally {
         mutationPendingRef.current = false;
         setMutationPending(false);
@@ -207,410 +248,1097 @@ function ControlPlane({ client, logout }: { client: ApiClient; logout: () => voi
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
-  async function createCredential(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const name = String(new FormData(form).get("name") ?? "");
+  const openWorkspace = useCallback(
+    (machine: MachineSummary) => {
+      if (workspaceTabs.length >= MAX_WORKSPACE_TABS) {
+        setError(
+          `This page already has ${MAX_WORKSPACE_TABS} workspace tabs. Close one before opening another Host.`,
+        );
+        return;
+      }
+      const id = `workspace-${++nextWorkspaceId.current}`;
+      setWorkspaceTabs((tabs) => [...tabs, { id, machine, sessionTitle: null }]);
+      setActiveWorkspaceId(id);
+      navigate("/workspaces");
+    },
+    [navigate, workspaceTabs.length],
+  );
+
+  const closeWorkspace = useCallback(
+    (id: string) => {
+      const index = workspaceTabs.findIndex((tab) => tab.id === id);
+      if (index < 0) return;
+      const remaining = workspaceTabs.filter((tab) => tab.id !== id);
+      setWorkspaceTabs(remaining);
+      if (activeWorkspaceId === id) {
+        setActiveWorkspaceId(remaining[Math.min(index, remaining.length - 1)]?.id ?? null);
+      }
+    },
+    [activeWorkspaceId, workspaceTabs],
+  );
+
+  const updateWorkspaceTitle = useCallback((id: string, sessionTitle: string | null) => {
+    setWorkspaceTabs((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, sessionTitle } : tab)));
+  }, []);
+
+  async function createHost(input: {
+    alias: string;
+    host_identity: string;
+    ssh_credential_id?: string;
+    target_account: string;
+    tmux_path: string;
+    tmux_socket_identity: string;
+  }) {
+    let disclosure: EnrollmentDisclosure | null = null;
+    let machineId = "";
+    const completed = await runMutation(async () => {
+      const created = await client.createMachine(input);
+      machineId = created.machine.machine_id;
+      disclosure = {
+        expiresIn: created.enrollment_expires_in,
+        token: created.enrollment_token,
+      };
+      await refresh();
+    }, "Host creation failed.");
+    if (completed && disclosure !== null) {
+      setEnrollmentDisclosure(disclosure);
+      navigate(`/hosts/${machineId}`);
+    }
+  }
+
+  async function createCredential(name: string) {
     await runMutation(async () => {
       await client.createCredential({ name });
-      form.reset();
       await refresh();
     }, "Credential creation failed.");
   }
 
-  async function changeCredential(
+  async function updateCredential(
     credential: CredentialSummary | null,
     action: "rename" | "default" | "reset" | "retire",
+    value?: string,
   ) {
     await runMutation(async () => {
-      if (action === "rename" && credential !== null) {
-        const name = window.prompt("New credential name", credential.name);
-        if (name === null) return;
-        await client.renameCredential(credential.ssh_credential_id, name);
+      if (action === "rename" && credential !== null && value !== undefined) {
+        await client.renameCredential(credential.ssh_credential_id, value);
       } else if (action === "default" && credential !== null) {
         await client.setDefaultCredential(credential.ssh_credential_id);
-      } else if (action === "reset") {
-        const name = window.prompt(
-          "Name for the new generated default credential",
-          "Reset default",
-        );
-        if (name === null) return;
-        await client.resetDefaultCredential(name);
+      } else if (action === "reset" && value !== undefined) {
+        await client.resetDefaultCredential(value);
       } else if (action === "retire" && credential !== null) {
-        if (!window.confirm(`Retire ${credential.name}?`)) return;
         await client.retireCredential(credential.ssh_credential_id);
       }
       await refresh();
     }, "Credential update failed.");
   }
 
-  async function createMachine(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
+  async function renameHost(machine: MachineSummary, alias: string) {
     await runMutation(async () => {
-      const created = await client.createMachine({
-        alias: String(data.get("alias") ?? ""),
-        host_identity: String(data.get("host_identity") ?? ""),
-        target_account: String(data.get("target_account") ?? ""),
-        tmux_path: String(data.get("tmux_path") ?? "/usr/bin/tmux"),
-        tmux_socket_identity: String(data.get("tmux_socket_identity") ?? "default"),
-      });
-      setIssuedToken(created.enrollment_token);
-      form.reset();
+      await client.renameMachine(machine.machine_id, alias);
       await refresh();
-    }, "Machine creation failed.");
+    }, "Host rename failed.");
   }
 
-  async function reissue(machineId: string) {
-    await runMutation(async () => {
-      const issued = await client.issueEnrollment(machineId);
-      setIssuedToken(issued.enrollment_token);
-    }, "Token issuance failed.");
-  }
-
-  async function changeMachine(
+  async function changeHostLifecycle(
     machine: MachineSummary,
-    action: "rename" | "disable" | "revoke" | "re-enroll",
+    action: "disable" | "revoke" | "re-enroll",
   ) {
     await runMutation(async () => {
-      if (action === "rename") {
-        const alias = window.prompt("New Machine alias", machine.alias);
-        if (alias === null) return;
-        await client.renameMachine(machine.machine_id, alias);
-      } else {
-        const verb = action === "revoke" ? "Revoke Relay access for" : `${action} `;
-        if (
-          !window.confirm(
-            `${verb}${machine.alias}? OwlMux access will close; target tmux and its processes will not be stopped.`,
-          )
-        ) {
-          return;
-        }
-        if (action === "disable") await client.disableMachine(machine.machine_id);
-        else if (action === "revoke") await client.revokeRelay(machine.machine_id);
-        else await client.reEnrollMachine(machine.machine_id);
-      }
+      if (action === "disable") await client.disableMachine(machine.machine_id);
+      else if (action === "revoke") await client.revokeRelay(machine.machine_id);
+      else await client.reEnrollMachine(machine.machine_id);
       await refresh();
-    }, "Machine lifecycle update failed.");
+    }, "Host lifecycle update failed.");
+  }
+
+  async function issueEnrollment(machine: MachineSummary) {
+    let disclosure: EnrollmentDisclosure | null = null;
+    const completed = await runMutation(async () => {
+      const issued = await client.issueEnrollment(machine.machine_id);
+      disclosure = {
+        expiresIn: issued.enrollment_expires_in,
+        token: issued.enrollment_token,
+      };
+      await refresh();
+    }, "Enrollment token issuance failed.");
+    if (completed && disclosure !== null) setEnrollmentDisclosure(disclosure);
   }
 
   async function cancelEnrollment(machine: MachineSummary) {
     await runMutation(async () => {
-      if (!window.confirm(`Cancel the currently issued enrollment token for ${machine.alias}?`))
-        return;
       await client.cancelEnrollment(machine.machine_id);
-      setIssuedToken(null);
       await refresh();
     }, "Enrollment cancellation failed.");
   }
 
-  async function rebindMachine(machine: MachineSummary, credentialId: string) {
-    if (
-      !window.confirm(
-        `Use the selected credential for future SSH connections to ${machine.alias}? Install its public key first. Existing authenticated SSH children may continue with the old credential.`,
-      )
-    ) {
-      return;
-    }
+  async function rebindHost(machine: MachineSummary, credentialId: string) {
     await runMutation(async () => {
       await client.rebindMachine(machine.machine_id, credentialId);
       await refresh();
-    }, "Machine credential rebind failed.");
+    }, "Host credential rebind failed.");
   }
 
-  const machineDetailId = route.startsWith("/machines/") ? route.slice("/machines/".length) : null;
-  const visibleMachines =
-    machineDetailId === null
-      ? machines
-      : machines.filter((machine) => machine.machine_id === machineDetailId);
-
-  if (workspaceMachine !== null) {
-    return (
-      <InteractiveWorkspace
-        client={client}
-        machine={workspaceMachine}
-        onAuthenticationFailure={logout}
-        onClose={() => setWorkspaceMachine(null)}
-      />
-    );
-  }
+  const managementDisabled = outcomeUnknown || mutationPending;
+  const terminalVisible = route === "/workspaces" && activeWorkspaceId !== null;
 
   return (
-    <main className="control-shell">
-      <header className="control-header">
-        <div>
-          <p className="eyebrow">
-            {deployment?.profile === "clustered" ? "Clustered control plane" : "Control plane"}
-          </p>
-          <h1>OwlMux</h1>
-          <p className="muted">
-            {deployment ? `Deployment ${deployment.deployment_id}` : "Loading deployment…"}
-          </p>
-        </div>
-        <button className="secondary-action" onClick={logout} type="button">
-          Log out and clear key
-        </button>
-      </header>
+    <div className={terminalVisible ? "authenticated-shell is-terminal" : "authenticated-shell"}>
+      <AppHeader deployment={deployment} logout={logout} navigate={navigate} route={route} />
 
-      <nav className="resource-actions" aria-label="Control plane">
-        <button
-          className={route === "/ssh-credentials" ? "" : "secondary-action"}
-          onClick={() => navigate("/ssh-credentials")}
-          type="button"
-        >
-          SSH credentials
-        </button>
-        <button
-          className={route.startsWith("/machines") ? "" : "secondary-action"}
-          onClick={() => navigate("/machines")}
-          type="button"
-        >
-          Machines
-        </button>
-      </nav>
+      {route === "/workspaces" && workspaceTabs.length > 0 && (
+        <WorkspaceTabs
+          activeId={activeWorkspaceId}
+          onActivate={setActiveWorkspaceId}
+          onClose={closeWorkspace}
+          tabs={workspaceTabs}
+        />
+      )}
 
       {error && (
-        <div className="error-banner" role="alert">
-          <p>{error}</p>
+        <div className="global-error" role="alert">
+          <span>{error}</span>
           {outcomeUnknown && (
-            <button className="secondary-action" onClick={() => void refresh(true)} type="button">
+            <button
+              className="button button-secondary button-compact"
+              onClick={() => void refresh(true)}
+              type="button"
+            >
               Refresh durable state
+            </button>
+          )}
+          {!outcomeUnknown && (
+            <button
+              aria-label="Dismiss error"
+              className="icon-button"
+              onClick={() => setError("")}
+              type="button"
+            >
+              ×
             </button>
           )}
         </div>
       )}
-      {issuedToken && (
-        <section className="token-card" aria-live="polite">
-          <div>
-            <h2>One-use enrollment token</h2>
-            <p>Copy it now. It is not available from later reads.</p>
-          </div>
-          <code>{issuedToken}</code>
-          <button onClick={() => setIssuedToken(null)} type="button">
-            Clear token
-          </button>
-        </section>
+
+      {route === "/workspaces" && activeWorkspaceId === null && (
+        <WorkspaceHome
+          loading={loading}
+          machines={machines}
+          navigate={navigate}
+          onOpen={openWorkspace}
+          openTabs={workspaceTabs.length}
+        />
       )}
 
-      <fieldset className="control-grid" disabled={outcomeUnknown || mutationPending}>
-        {route === "/ssh-credentials" && (
-          <section className="panel">
-            <h2>SSH credentials</h2>
-            <p className="muted">Target administrators install these public keys externally.</p>
-            {loading && <p className="muted">Loading credentials…</p>}
-            {!loading && credentials.length === 0 && (
-              <p className="error-banner">No SSH credential is available.</p>
-            )}
-            <ul className="resource-list">
-              {credentials.map((credential) => (
-                <li key={credential.ssh_credential_id}>
-                  <strong>{credential.name}</strong>
-                  <span>{credential.public_fingerprint_sha256}</span>
-                  <span>
-                    {credential.is_default ? "Default · " : ""}
-                    {credential.bound_machine_count} bound Machines
-                  </span>
-                  <div className="resource-actions">
-                    <button
-                      onClick={() => void navigator.clipboard.writeText(credential.public_key)}
-                      type="button"
-                    >
-                      Copy public key
-                    </button>
-                    <button
-                      className="secondary-action"
-                      onClick={() => void changeCredential(credential, "rename")}
-                      type="button"
-                    >
-                      Rename
-                    </button>
-                    {!credential.is_default && credential.status === "active" && (
-                      <button
-                        className="secondary-action"
-                        onClick={() => void changeCredential(credential, "default")}
-                        type="button"
-                      >
-                        Make default
-                      </button>
-                    )}
-                    {!credential.is_default &&
-                      credential.status === "active" &&
-                      credential.bound_machine_count === 0 && (
-                        <button
-                          className="secondary-action"
-                          onClick={() => void changeCredential(credential, "retire")}
-                          type="button"
-                        >
-                          Retire
-                        </button>
-                      )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <form className="compact-form" onSubmit={createCredential}>
-              <label htmlFor="credential-name">New generated credential name</label>
-              <input id="credential-name" maxLength={64} name="name" required />
-              <button type="submit">Generate credential</button>
+      <div
+        aria-hidden={route !== "/workspaces" || activeWorkspaceId === null}
+        className={
+          route === "/workspaces" && activeWorkspaceId !== null
+            ? "workspace-stack"
+            : "workspace-stack is-hidden"
+        }
+      >
+        {workspaceTabs.map((tab) => (
+          <div
+            className={tab.id === activeWorkspaceId ? "workspace-slot is-active" : "workspace-slot"}
+            key={tab.id}
+          >
+            <InteractiveWorkspace
+              client={client}
+              machine={tab.machine}
+              onAuthenticationFailure={logout}
+              onClose={() => closeWorkspace(tab.id)}
+              onTitleChange={(title) => updateWorkspaceTitle(tab.id, title)}
+              visible={route === "/workspaces" && tab.id === activeWorkspaceId}
+            />
+          </div>
+        ))}
+      </div>
+
+      {route === "/hosts" && (
+        <HostsPage
+          disabled={managementDisabled}
+          loading={loading}
+          machines={machines}
+          navigate={navigate}
+          onOpen={openWorkspace}
+        />
+      )}
+
+      {route === "/hosts/new" && (
+        <HostCreatePage
+          credentials={credentials}
+          disabled={managementDisabled}
+          navigate={navigate}
+          onCreate={createHost}
+        />
+      )}
+
+      {route.startsWith("/hosts/") && route !== "/hosts/new" && (
+        <HostDetailPage
+          client={client}
+          credentials={credentials}
+          disabled={managementDisabled}
+          machineId={route.slice("/hosts/".length)}
+          navigate={navigate}
+          onCancelEnrollment={(machine) =>
+            setConfirmation({
+              confirmLabel: "Cancel token",
+              description: `Cancel the currently issued enrollment token for ${machine.alias}?`,
+              onConfirm: () => cancelEnrollment(machine),
+              title: "Cancel enrollment token",
+            })
+          }
+          onError={presentError}
+          onIssueEnrollment={issueEnrollment}
+          onLifecycle={(machine, action) =>
+            setConfirmation(hostLifecycleConfirmation(machine, action, changeHostLifecycle))
+          }
+          onOpen={openWorkspace}
+          onRebind={(machine, credentialId) =>
+            setConfirmation({
+              confirmLabel: "Rebind credential",
+              description: `Use the selected credential for future SSH connections to ${machine.alias}? Install its public key first. Existing authenticated SSH children may continue with the old credential.`,
+              onConfirm: () => rebindHost(machine, credentialId),
+              title: "Rebind Host credential",
+            })
+          }
+          onRename={(machine) =>
+            setTextRequest({
+              initialValue: machine.alias,
+              label: "Host name",
+              onSubmit: (alias) => renameHost(machine, alias),
+              submitLabel: "Rename Host",
+              title: `Rename ${machine.alias}`,
+            })
+          }
+          resourceRevision={resourceRevision}
+        />
+      )}
+
+      {route === "/ssh-credentials" && (
+        <CredentialsPage
+          credentials={credentials}
+          disabled={managementDisabled}
+          loading={loading}
+          onCopyError={(reason) => presentError(reason, "Could not copy the public key.")}
+          onCreate={createCredential}
+          onDefault={(credential) => void updateCredential(credential, "default")}
+          onRename={(credential) =>
+            setTextRequest({
+              initialValue: credential.name,
+              label: "Credential name",
+              onSubmit: (name) => updateCredential(credential, "rename", name),
+              submitLabel: "Rename credential",
+              title: `Rename ${credential.name}`,
+            })
+          }
+          onReset={() =>
+            setTextRequest({
+              initialValue: "Reset default",
+              label: "New generated default credential name",
+              onSubmit: (name) => updateCredential(null, "reset", name),
+              submitLabel: "Generate and reset default",
+              title: "Reset default credential",
+            })
+          }
+          onRetire={(credential) =>
+            setConfirmation({
+              confirmLabel: "Retire credential",
+              danger: true,
+              description: `Retire ${credential.name}? Retired credentials cannot be selected for future SSH connections.`,
+              onConfirm: () => updateCredential(credential, "retire"),
+              title: "Retire credential",
+            })
+          }
+        />
+      )}
+
+      {route === "/audit" && <AuditPage events={auditEvents} loading={loading} />}
+
+      {route === "/deployment" && (
+        <DeploymentPage
+          deployment={deployment}
+          logout={logout}
+          workspaceCount={workspaceTabs.length}
+        />
+      )}
+
+      {confirmation !== null && (
+        <ConfirmDialog
+          confirmation={confirmation}
+          disabled={mutationPending}
+          onClose={() => setConfirmation(null)}
+        />
+      )}
+      {textRequest !== null && (
+        <TextDialog
+          disabled={mutationPending}
+          onClose={() => setTextRequest(null)}
+          request={textRequest}
+        />
+      )}
+      {enrollmentDisclosure !== null && (
+        <EnrollmentDialog
+          disclosure={enrollmentDisclosure}
+          onClose={() => setEnrollmentDisclosure(null)}
+          onCopyError={(reason) => presentError(reason, "Could not copy the enrollment token.")}
+        />
+      )}
+    </div>
+  );
+}
+
+function AppHeader({
+  deployment,
+  logout,
+  navigate,
+  route,
+}: {
+  deployment: DeploymentPresentation | null;
+  logout: () => void;
+  navigate: (path: string) => void;
+  route: string;
+}) {
+  const items = [
+    ["Workspaces", "/workspaces"],
+    ["Hosts", "/hosts"],
+    ["Credentials", "/ssh-credentials"],
+    ["Audit", "/audit"],
+  ] as const;
+  return (
+    <header className="app-header">
+      <button className="brand" onClick={() => navigate("/workspaces")} type="button">
+        <span className="brand-mark" aria-hidden="true">
+          O
+        </span>
+        <span>OwlMux</span>
+      </button>
+      <nav className="primary-navigation" aria-label="OwlMux">
+        {items.map(([label, path]) => (
+          <button
+            aria-current={
+              route === path || (path === "/hosts" && route.startsWith("/hosts"))
+                ? "page"
+                : undefined
+            }
+            className="navigation-item"
+            key={path}
+            onClick={() => navigate(path)}
+            type="button"
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="header-meta">
+        <button className="deployment-link" onClick={() => navigate("/deployment")} type="button">
+          <span className="status-dot" />
+          {deployment?.profile === "clustered" ? "Clustered" : "Deployment"}
+        </button>
+        <button className="button button-ghost button-compact" onClick={logout} type="button">
+          Log out
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function WorkspaceTabs({
+  activeId,
+  onActivate,
+  onClose,
+  tabs,
+}: {
+  activeId: string | null;
+  onActivate: (id: string | null) => void;
+  onClose: (id: string) => void;
+  tabs: Array<WorkspaceTab>;
+}) {
+  return (
+    <nav className="workspace-tabs" aria-label="Open workspaces">
+      <button
+        aria-current={activeId === null ? "page" : undefined}
+        className={activeId === null ? "workspace-tab is-active" : "workspace-tab"}
+        onClick={() => onActivate(null)}
+        type="button"
+      >
+        Hosts
+      </button>
+      {tabs.map((tab) => (
+        <div
+          className={tab.id === activeId ? "workspace-tab is-active" : "workspace-tab"}
+          key={tab.id}
+        >
+          <button className="workspace-tab-label" onClick={() => onActivate(tab.id)} type="button">
+            {tab.machine.alias}
+            {tab.sessionTitle !== null && <span>/ {tab.sessionTitle}</span>}
+          </button>
+          <button
+            aria-label={`Close ${tab.machine.alias} workspace`}
+            className="workspace-tab-close"
+            onClick={() => onClose(tab.id)}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function WorkspaceHome({
+  loading,
+  machines,
+  navigate,
+  onOpen,
+  openTabs,
+}: {
+  loading: boolean;
+  machines: Array<MachineSummary>;
+  navigate: (path: string) => void;
+  onOpen: (machine: MachineSummary) => void;
+  openTabs: number;
+}) {
+  const [query, setQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInput.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
+  const visibleMachines = machines.filter((machine) =>
+    machine.alias.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  return (
+    <main className="page-shell workspace-home">
+      <header className="page-heading">
+        <div>
+          <p className="section-kicker">Terminal workspaces</p>
+          <h1>Continue on a saved Host</h1>
+          <p>Open a current target, choose a tmux session, and keep target work on the target.</p>
+        </div>
+        <button
+          className="button button-primary"
+          onClick={() => navigate("/hosts/new")}
+          type="button"
+        >
+          Add Host
+        </button>
+      </header>
+
+      <label className="search-field">
+        <span className="visually-hidden">Search Hosts</span>
+        <input
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search Hosts"
+          ref={searchInput}
+          type="search"
+          value={query}
+        />
+        <kbd>Ctrl/⌘ K</kbd>
+      </label>
+
+      {loading && <LoadingCards label="Loading saved Hosts…" />}
+      {!loading && machines.length === 0 && (
+        <div className="empty-state">
+          <h2>No saved Hosts yet</h2>
+          <p>Add one fixed target identity, enroll its Relay, then open target tmux here.</p>
+          <button
+            className="button button-primary"
+            onClick={() => navigate("/hosts/new")}
+            type="button"
+          >
+            Add your first Host
+          </button>
+        </div>
+      )}
+      {!loading && machines.length > 0 && visibleMachines.length === 0 && (
+        <div className="empty-state compact">
+          <h2>No matching Hosts</h2>
+          <p>Try another name.</p>
+        </div>
+      )}
+      <div className="host-card-grid">
+        {visibleMachines.map((machine) => (
+          <HostCard
+            key={machine.machine_id}
+            machine={machine}
+            navigate={navigate}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
+
+      <section className="page-memory-card">
+        <span className="status-pill is-neutral">
+          {openTabs} open workspace{openTabs === 1 ? "" : "s"}
+        </span>
+        <p>
+          Workspace tabs exist only in this page. Closing or reloading it detaches OwlMux while
+          target tmux sessions and processes continue.
+        </p>
+      </section>
+    </main>
+  );
+}
+
+function HostCard({
+  machine,
+  navigate,
+  onOpen,
+}: {
+  machine: MachineSummary;
+  navigate: (path: string) => void;
+  onOpen: (machine: MachineSummary) => void;
+}) {
+  const canOpen = machine.lifecycle === "active";
+  return (
+    <article className="host-card">
+      <header>
+        <div>
+          <h2>{machine.alias}</h2>
+          <p>{hostLifecycleLabel(machine.lifecycle)}</p>
+        </div>
+        <StatusPill machine={machine} />
+      </header>
+      <div className="host-card-detail">
+        <span>OwlMux Host</span>
+        <code>{shortId(machine.machine_id)}</code>
+      </div>
+      <footer>
+        {canOpen && (
+          <button className="button button-primary" onClick={() => onOpen(machine)} type="button">
+            Open
+          </button>
+        )}
+        <button
+          className="button button-secondary"
+          onClick={() => navigate(`/hosts/${machine.machine_id}`)}
+          type="button"
+        >
+          Manage
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+function HostsPage({
+  disabled,
+  loading,
+  machines,
+  navigate,
+  onOpen,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  machines: Array<MachineSummary>;
+  navigate: (path: string) => void;
+  onOpen: (machine: MachineSummary) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const visible = machines.filter((machine) =>
+    machine.alias.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  return (
+    <main className="page-shell">
+      <header className="page-heading">
+        <div>
+          <p className="section-kicker">Management</p>
+          <h1>Hosts</h1>
+          <p>Saved fixed SSH identities and tmux scopes reached through enrolled Relays.</p>
+        </div>
+        <button
+          className="button button-primary"
+          disabled={disabled}
+          onClick={() => navigate("/hosts/new")}
+          type="button"
+        >
+          Add Host
+        </button>
+      </header>
+      <label className="search-field narrow">
+        <span className="visually-hidden">Search Hosts</span>
+        <input
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search Hosts"
+          type="search"
+          value={query}
+        />
+      </label>
+      {loading && <LoadingCards label="Loading Hosts…" />}
+      {!loading && visible.length === 0 && (
+        <div className="empty-state compact">
+          <h2>{machines.length === 0 ? "No Hosts yet" : "No matching Hosts"}</h2>
+          <p>
+            {machines.length === 0
+              ? "Add a fixed target access scope to begin."
+              : "Try another name."}
+          </p>
+        </div>
+      )}
+      <div className="host-table" role="list">
+        {visible.map((machine) => (
+          <article className="host-table-row" key={machine.machine_id} role="listitem">
+            <div className="host-table-name">
+              <strong>{machine.alias}</strong>
+              <code>{shortId(machine.machine_id)}</code>
+            </div>
+            <StatusPill machine={machine} />
+            <span>{hostLifecycleLabel(machine.lifecycle)}</span>
+            <div className="row-actions">
+              {machine.lifecycle === "active" && (
+                <button
+                  className="button button-primary button-compact"
+                  onClick={() => onOpen(machine)}
+                  type="button"
+                >
+                  Open
+                </button>
+              )}
               <button
-                className="secondary-action"
-                onClick={() => void changeCredential(null, "reset")}
+                className="button button-secondary button-compact"
+                onClick={() => navigate(`/hosts/${machine.machine_id}`)}
                 type="button"
               >
-                Generate and reset default
+                Manage
               </button>
-            </form>
-          </section>
-        )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </main>
+  );
+}
 
-        {route.startsWith("/machines") && (
-          <section className="panel">
-            <h2>{machineDetailId === null ? "Machines" : "Machine"}</h2>
-            {loading && <p className="muted">Loading Machines…</p>}
-            {!loading && machines.length === 0 && (
-              <p className="muted">
-                No Machines yet. Create one to issue its first enrollment token.
-              </p>
-            )}
-            <ul className="resource-list">
-              {visibleMachines.map((machine) => (
-                <li key={machine.machine_id}>
-                  <strong>{machine.alias}</strong>
-                  <span>
-                    {machine.lifecycle} · {machine.reachability}
-                  </span>
-                  <span>Credential {machine.ssh_credential_id}</span>
-                  <div className="resource-actions">
-                    {machineDetailId === null && (
-                      <button
-                        onClick={() => navigate(`/machines/${machine.machine_id}`)}
-                        type="button"
-                      >
-                        Manage Machine
-                      </button>
-                    )}
-                    <button
-                      className="secondary-action"
-                      onClick={() => void changeMachine(machine, "rename")}
-                      type="button"
-                    >
-                      Rename
-                    </button>
-                    {machine.lifecycle === "pending" && (
-                      <>
-                        <button onClick={() => void reissue(machine.machine_id)} type="button">
-                          Issue replacement token
-                        </button>
-                        <button
-                          className="secondary-action"
-                          onClick={() => void cancelEnrollment(machine)}
-                          type="button"
-                        >
-                          Cancel issued token
-                        </button>
-                      </>
-                    )}
-                    {machine.lifecycle === "active" && (
-                      <>
-                        <button onClick={() => setWorkspaceMachine(machine)} type="button">
-                          Open workspace
-                        </button>
-                        <button
-                          className="secondary-action"
-                          onClick={() => void changeMachine(machine, "re-enroll")}
-                          type="button"
-                        >
-                          Re-enroll Relay
-                        </button>
-                        <button
-                          className="secondary-action"
-                          onClick={() => void changeMachine(machine, "revoke")}
-                          type="button"
-                        >
-                          Revoke Relay
-                        </button>
-                        <button
-                          className="secondary-action"
-                          onClick={() => void changeMachine(machine, "disable")}
-                          type="button"
-                        >
-                          Disable
-                        </button>
-                      </>
-                    )}
-                    {machine.lifecycle === "disabled" && (
-                      <button
-                        onClick={() => void changeMachine(machine, "re-enroll")}
-                        type="button"
-                      >
-                        Re-enroll as pending
-                      </button>
-                    )}
-                  </div>
-                  {machine.lifecycle === "active" && (
-                    <MachineCredentialControl
-                      credentials={credentials}
-                      key={`${machine.machine_id}:${machine.ssh_credential_id}`}
-                      machine={machine}
-                      onRebind={rebindMachine}
-                    />
-                  )}
-                </li>
-              ))}
-            </ul>
-            {machineDetailId === null && (
-              <form className="compact-form" onSubmit={createMachine}>
-                <label>
-                  Alias
-                  <input maxLength={64} name="alias" required />
-                </label>
-                <label>
-                  Target account
-                  <input maxLength={64} name="target_account" required />
-                </label>
-                <label>
-                  tmux path
-                  <input defaultValue="/usr/bin/tmux" name="tmux_path" required />
-                </label>
-                <label>
-                  tmux socket identity
-                  <input defaultValue="default" name="tmux_socket_identity" required />
-                </label>
-                <label>
-                  Expected SSH host public key
-                  <textarea name="host_identity" required rows={3} />
-                </label>
-                <button type="submit">Create pending Machine</button>
-              </form>
-            )}
-            {machineDetailId !== null && visibleMachines.length === 0 && !loading && (
-              <p className="error-banner">Machine not found.</p>
-            )}
-          </section>
-        )}
-      </fieldset>
-
-      <section className="panel">
-        <h2>Recent audit events</h2>
-        <p className="muted">
-          The newest 200 safe durable events are shown. Credentials, terminal data, target
-          diagnostics, and internal payloads are never audit fields.
-        </p>
-        {loading && <p className="muted">Loading audit events…</p>}
-        {!loading && auditEvents.length === 0 && <p className="muted">No audit events yet.</p>}
-        <ul className="resource-list">
-          {auditEvents.map((event) => (
-            <li key={event.audit_event_id}>
-              <strong>{event.action}</strong>
-              <span>
-                {event.resource_kind} · {event.outcome_class}
+function HostCreatePage({
+  credentials,
+  disabled,
+  navigate,
+  onCreate,
+}: {
+  credentials: Array<CredentialSummary>;
+  disabled: boolean;
+  navigate: (path: string) => void;
+  onCreate: (input: {
+    alias: string;
+    host_identity: string;
+    ssh_credential_id?: string;
+    target_account: string;
+    tmux_path: string;
+    tmux_socket_identity: string;
+  }) => Promise<void>;
+}) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const credentialId = String(data.get("ssh_credential_id") ?? "");
+    await onCreate({
+      alias: String(data.get("alias") ?? ""),
+      host_identity: String(data.get("host_identity") ?? ""),
+      ...(credentialId.length === 0 ? {} : { ssh_credential_id: credentialId }),
+      target_account: String(data.get("target_account") ?? ""),
+      tmux_path: String(data.get("tmux_path") ?? "/usr/bin/tmux"),
+      tmux_socket_identity: String(data.get("tmux_socket_identity") ?? "default"),
+    });
+  }
+  return (
+    <main className="page-shell narrow-page">
+      <button className="back-link" onClick={() => navigate("/hosts")} type="button">
+        Back to Hosts
+      </button>
+      <header className="page-heading">
+        <div>
+          <p className="section-kicker">Host setup</p>
+          <h1>Add a saved Host</h1>
+          <p>Create one immutable target identity and issue its first one-use Relay token.</p>
+        </div>
+      </header>
+      <form className="host-setup-form" onSubmit={submit}>
+        <fieldset disabled={disabled}>
+          <section className="settings-card">
+            <header>
+              <span className="step-number">1</span>
+              <div>
+                <h2>Target identity</h2>
+                <p>These fields fix the SSH account and verified target host boundary.</p>
+              </div>
+            </header>
+            <div className="form-grid two-columns">
+              <label>
+                Host name
+                <input maxLength={64} name="alias" placeholder="Production" required />
+              </label>
+              <label>
+                Target account
+                <input maxLength={64} name="target_account" placeholder="deploy" required />
+              </label>
+            </div>
+            <label>
+              Expected SSH host public key
+              <textarea
+                name="host_identity"
+                placeholder="ssh-ed25519 AAAA…"
+                required
+                rows={4}
+                spellCheck={false}
+              />
+              <span className="field-help">
+                OwlMux always verifies this exact identity. A host-key change requires a new Host.
               </span>
-              <span>{event.occurred_at}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+            </label>
+          </section>
+
+          <section className="settings-card">
+            <header>
+              <span className="step-number">2</span>
+              <div>
+                <h2>SSH credential</h2>
+                <p>
+                  Select a generated Deployment credential and install its public key externally.
+                </p>
+              </div>
+            </header>
+            <label>
+              Credential
+              <select defaultValue="" name="ssh_credential_id">
+                <option value="">Deployment default</option>
+                {credentials
+                  .filter((credential) => credential.status === "active")
+                  .map((credential) => (
+                    <option key={credential.ssh_credential_id} value={credential.ssh_credential_id}>
+                      {credential.name}
+                      {credential.is_default ? " · default" : ""}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <p className="callout neutral">
+              OwlMux never edits authorized_keys. Install the selected public key on the target
+              account before enrolling Relay.
+            </p>
+          </section>
+
+          <details className="settings-card advanced-settings">
+            <summary>Advanced tmux scope</summary>
+            <p>The defaults cover a standard target-owned tmux installation.</p>
+            <div className="form-grid two-columns">
+              <label>
+                tmux path
+                <input defaultValue="/usr/bin/tmux" name="tmux_path" required />
+              </label>
+              <label>
+                tmux socket identity
+                <input defaultValue="default" name="tmux_socket_identity" required />
+              </label>
+            </div>
+          </details>
+
+          <footer className="form-actions">
+            <button
+              className="button button-secondary"
+              onClick={() => navigate("/hosts")}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button className="button button-primary" type="submit">
+              Create Host and issue token
+            </button>
+          </footer>
+        </fieldset>
+      </form>
+    </main>
+  );
+}
+
+function HostDetailPage({
+  client,
+  credentials,
+  disabled,
+  machineId,
+  navigate,
+  onCancelEnrollment,
+  onError,
+  onIssueEnrollment,
+  onLifecycle,
+  onOpen,
+  onRebind,
+  onRename,
+  resourceRevision,
+}: {
+  client: ApiClient;
+  credentials: Array<CredentialSummary>;
+  disabled: boolean;
+  machineId: string;
+  navigate: (path: string) => void;
+  onCancelEnrollment: (machine: MachineSummary) => void;
+  onError: (reason: unknown, fallback: string) => void;
+  onIssueEnrollment: (machine: MachineSummary) => Promise<void>;
+  onLifecycle: (machine: MachineSummary, action: "disable" | "revoke" | "re-enroll") => void;
+  onOpen: (machine: MachineSummary) => void;
+  onRebind: (machine: MachineSummary, credentialId: string) => void;
+  onRename: (machine: MachineSummary) => void;
+  resourceRevision: number;
+}) {
+  const [detail, setDetail] = useState<MachineDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let current = true;
+    void client
+      .getMachine(machineId)
+      .then((next) => {
+        if (current) setDetail(next);
+      })
+      .catch((reason: unknown) => {
+        if (current) onError(reason, "Host detail could not be loaded.");
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [client, machineId, onError, resourceRevision]);
+
+  if (loading && detail === null) {
+    return (
+      <main className="page-shell">
+        <LoadingCards label="Loading Host…" />
+      </main>
+    );
+  }
+  if (detail === null) {
+    return (
+      <main className="page-shell narrow-page">
+        <div className="empty-state">
+          <h1>Host not found</h1>
+          <button
+            className="button button-primary"
+            onClick={() => navigate("/hosts")}
+            type="button"
+          >
+            Back to Hosts
+          </button>
+        </div>
+      </main>
+    );
+  }
+  const machine: MachineSummary = detail;
+  const credential = credentials.find(
+    (candidate) => candidate.ssh_credential_id === detail.ssh_credential_id,
+  );
+  return (
+    <main className="page-shell host-detail-page">
+      <button className="back-link" onClick={() => navigate("/hosts")} type="button">
+        Back to Hosts
+      </button>
+      <header className="host-detail-heading">
+        <div>
+          <div className="heading-with-status">
+            <h1>{detail.alias}</h1>
+            <StatusPill machine={detail} />
+          </div>
+          <p>
+            {detail.target_account} · {hostLifecycleLabel(detail.lifecycle)} ·{" "}
+            {shortId(detail.machine_id)}
+          </p>
+        </div>
+        <div className="row-actions">
+          <button
+            className="button button-secondary"
+            disabled={disabled}
+            onClick={() => onRename(machine)}
+            type="button"
+          >
+            Rename
+          </button>
+          {detail.lifecycle === "active" && (
+            <button className="button button-primary" onClick={() => onOpen(machine)} type="button">
+              Open workspace
+            </button>
+          )}
+        </div>
+      </header>
+
+      <nav className="section-navigation" aria-label="Host sections">
+        <a href="#overview">Overview</a>
+        <a href="#ssh-identity">SSH identity</a>
+        <a href="#tmux">tmux</a>
+        <a href="#relay">Relay</a>
+        <a href="#danger-zone">Danger zone</a>
+      </nav>
+
+      <fieldset className="settings-sections" disabled={disabled}>
+        <section className="settings-card" id="overview">
+          <header>
+            <div>
+              <h2>Overview</h2>
+              <p>Durable Host identity and current advisory reachability.</p>
+            </div>
+          </header>
+          <dl className="detail-grid">
+            <Detail label="Lifecycle" value={hostLifecycleLabel(detail.lifecycle)} />
+            <Detail label="Reachability" value={reachabilityLabel(detail.reachability)} />
+            <Detail label="Machine ID" value={detail.machine_id} code />
+            <Detail label="Target account" value={detail.target_account} code />
+          </dl>
+        </section>
+
+        <section className="settings-card" id="ssh-identity">
+          <header>
+            <div>
+              <h2>SSH identity</h2>
+              <p>The target administrator controls sshd and public-key authorization.</p>
+            </div>
+          </header>
+          <dl className="detail-grid">
+            <Detail label="Bound credential" value={credential?.name ?? detail.ssh_credential_id} />
+            <Detail
+              label="Credential fingerprint"
+              value={credential?.public_fingerprint_sha256 ?? "Unavailable"}
+              code
+            />
+          </dl>
+          <label>
+            Expected target SSH host public key
+            <textarea readOnly rows={4} spellCheck={false} value={detail.host_identity} />
+          </label>
+          <MachineCredentialControl
+            credentials={credentials}
+            key={`${detail.machine_id}:${detail.ssh_credential_id}`}
+            machine={detail}
+            onRebind={onRebind}
+          />
+        </section>
+
+        <section className="settings-card" id="tmux">
+          <header>
+            <div>
+              <h2>Target-owned tmux scope</h2>
+              <p>These immutable values define the only tmux client scope OwlMux may enter.</p>
+            </div>
+          </header>
+          <dl className="detail-grid">
+            <Detail label="tmux path" value={detail.tmux_path} code />
+            <Detail label="Socket identity" value={detail.tmux_socket_identity} code />
+          </dl>
+          <p className="callout neutral">
+            Changing the SSH host identity, target account, tmux path, or socket scope requires a
+            new Host registration.
+          </p>
+        </section>
+
+        <section className="settings-card" id="relay">
+          <header>
+            <div>
+              <h2>Relay enrollment</h2>
+              <p>The target Relay establishes the outbound route to its fixed loopback sshd.</p>
+            </div>
+          </header>
+          {detail.lifecycle === "pending" && (
+            <div className="action-block">
+              <div>
+                <strong>Waiting for enrollment</strong>
+                <p>Issue a one-use token and configure it on the target Relay.</p>
+              </div>
+              <div className="row-actions">
+                <button
+                  className="button button-primary"
+                  onClick={() => void onIssueEnrollment(machine)}
+                  type="button"
+                >
+                  Issue replacement token
+                </button>
+                <button
+                  className="button button-secondary"
+                  onClick={() => onCancelEnrollment(machine)}
+                  type="button"
+                >
+                  Cancel issued token
+                </button>
+              </div>
+            </div>
+          )}
+          {detail.lifecycle === "verifying" && (
+            <p className="callout warning">
+              Relay is completing bounded SSH access verification. A failed or expired attempt
+              returns this Host to pending without a reusable token.
+            </p>
+          )}
+          {detail.lifecycle === "active" && (
+            <div className="action-block">
+              <div>
+                <strong>Relay active</strong>
+                <p>Re-enrollment closes current OwlMux access and returns this Host to pending.</p>
+              </div>
+              <button
+                className="button button-secondary"
+                onClick={() => onLifecycle(machine, "re-enroll")}
+                type="button"
+              >
+                Re-enroll Relay
+              </button>
+            </div>
+          )}
+          {detail.lifecycle === "disabled" && (
+            <div className="action-block">
+              <div>
+                <strong>Host disabled</strong>
+                <p>Start explicit re-enrollment to make OwlMux access possible again.</p>
+              </div>
+              <button
+                className="button button-primary"
+                onClick={() => onLifecycle(machine, "re-enroll")}
+                type="button"
+              >
+                Re-enroll as pending
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="settings-card danger-zone" id="danger-zone">
+          <header>
+            <div>
+              <h2>Danger zone</h2>
+              <p>
+                These actions close OwlMux access only. They never stop target tmux or processes.
+              </p>
+            </div>
+          </header>
+          {detail.lifecycle === "active" && (
+            <div className="danger-actions">
+              <button
+                className="button button-danger"
+                onClick={() => onLifecycle(machine, "revoke")}
+                type="button"
+              >
+                Revoke Relay access
+              </button>
+              <button
+                className="button button-danger"
+                onClick={() => onLifecycle(machine, "disable")}
+                type="button"
+              >
+                Disable Host
+              </button>
+            </div>
+          )}
+          {detail.lifecycle !== "active" && (
+            <p>No active OwlMux route is available for this Host.</p>
+          )}
+        </section>
+      </fieldset>
     </main>
   );
 }
@@ -622,11 +1350,11 @@ function MachineCredentialControl({
 }: {
   credentials: Array<CredentialSummary>;
   machine: MachineSummary;
-  onRebind: (machine: MachineSummary, credentialId: string) => Promise<void>;
+  onRebind: (machine: MachineSummary, credentialId: string) => void;
 }) {
   const [credentialId, setCredentialId] = useState(machine.ssh_credential_id);
   return (
-    <div className="compact-form">
+    <div className="credential-rebind">
       <label>
         Credential for future SSH connections
         <select
@@ -638,17 +1366,19 @@ function MachineCredentialControl({
             .map((credential) => (
               <option key={credential.ssh_credential_id} value={credential.ssh_credential_id}>
                 {credential.name}
+                {credential.is_default ? " · default" : ""}
               </option>
             ))}
         </select>
       </label>
-      <p className="muted">
+      <p>
         Install the selected public key first. Rebind has no SSH preflight and affects only future
-        SSH children; an existing authenticated child may continue.
+        SSH children.
       </p>
       <button
+        className="button button-secondary"
         disabled={credentialId === machine.ssh_credential_id}
-        onClick={() => void onRebind(machine, credentialId)}
+        onClick={() => onRebind(machine, credentialId)}
         type="button"
       >
         Rebind credential
@@ -657,590 +1387,449 @@ function MachineCredentialControl({
   );
 }
 
-type ProjectionMetadata = Extract<AttachmentFrame, { type: "workspace.projection" }>;
-
-interface InstalledProjection {
-  metadata: ProjectionMetadata;
-  snapshots: Map<string, Array<Uint8Array>>;
-}
-
-interface PendingProjection extends InstalledProjection {
-  completed: Set<string>;
-}
-
-interface PaneSink {
-  enqueue(data: Uint8Array): boolean;
-}
-
-const MAX_RENDER_QUEUE_BYTES = 1024 * 1024;
-
-function InteractiveWorkspace({
-  client,
-  machine,
-  onAuthenticationFailure,
-  onClose,
+function CredentialsPage({
+  credentials,
+  disabled,
+  loading,
+  onCopyError,
+  onCreate,
+  onDefault,
+  onRename,
+  onReset,
+  onRetire,
 }: {
-  client: ApiClient;
-  machine: MachineSummary;
-  onAuthenticationFailure: () => void;
-  onClose: () => void;
+  credentials: Array<CredentialSummary>;
+  disabled: boolean;
+  loading: boolean;
+  onCopyError: (reason: unknown) => void;
+  onCreate: (name: string) => Promise<void>;
+  onDefault: (credential: CredentialSummary) => void;
+  onRename: (credential: CredentialSummary) => void;
+  onReset: () => void;
+  onRetire: (credential: CredentialSummary) => void;
 }) {
-  const attachment = useRef<AttachmentSession | null>(null);
-  const pendingProjection = useRef<PendingProjection | null>(null);
-  const currentWorkspaceEpoch = useRef<string | null>(null);
-  const paneSinks = useRef(new Map<string, PaneSink>());
-  const pendingOutput = useRef(new Map<string, Array<Uint8Array>>());
-  const pendingOutputBytes = useRef(0);
-  const [phase, setPhase] = useState("connecting");
-  const [tmuxVersion, setTmuxVersion] = useState("");
-  const [machineConnectionEpoch, setMachineConnectionEpoch] = useState("");
-  const [selectionEpoch, setSelectionEpoch] = useState("");
-  const [sessions, setSessions] = useState<Array<AttachmentSessionSummary>>([]);
-  const [projection, setProjection] = useState<InstalledProjection | null>(null);
-  const [writerRole, setWriterRole] = useState<"observer" | "writer">("observer");
-  const [writerAvailable, setWriterAvailable] = useState(false);
-  const [operationStatus, setOperationStatus] = useState("");
-  const [error, setError] = useState("");
-
-  const failRenderer = useCallback(() => {
-    setError("The Browser renderer could not keep up with bounded terminal output.");
-    setPhase("failed");
-    setProjection(null);
-    currentWorkspaceEpoch.current = null;
-    attachment.current?.dispose();
-  }, []);
-
-  const registerSink = useCallback(
-    (paneId: string, sink: PaneSink | null) => {
-      if (sink === null) {
-        paneSinks.current.delete(paneId);
-        return;
-      }
-      paneSinks.current.set(paneId, sink);
-      const queued = pendingOutput.current.get(paneId) ?? [];
-      pendingOutput.current.delete(paneId);
-      for (const data of queued) {
-        pendingOutputBytes.current -= data.length;
-        if (!sink.enqueue(data)) {
-          failRenderer();
-          return;
-        }
-      }
-    },
-    [failRenderer],
-  );
-
-  useEffect(() => {
-    const resetProjection = () => {
-      pendingProjection.current = null;
-      currentWorkspaceEpoch.current = null;
-      paneSinks.current.clear();
-      pendingOutput.current.clear();
-      pendingOutputBytes.current = 0;
-      setProjection(null);
-    };
-    const onFrame = (frame: AttachmentFrame) => {
-      if (frame.type === "workspace.phase") {
-        setPhase(frame.phase);
-        if (
-          frame.phase === "connecting" ||
-          frame.phase === "selecting" ||
-          frame.phase === "failed"
-        ) {
-          resetProjection();
-        } else {
-          const pending = pendingProjection.current;
-          if (pending === null || pending.completed.size !== pending.metadata.panes.length)
-            throw new Error("incomplete Browser projection");
-          currentWorkspaceEpoch.current = pending.metadata.workspace_epoch;
-          pendingProjection.current = null;
-          setProjection({ metadata: pending.metadata, snapshots: pending.snapshots });
-        }
-      } else if (frame.type === "session.list") {
-        setTmuxVersion(
-          frame.tmux_server_version === null
-            ? `${frame.tmux_client_version} · no running server`
-            : `${frame.tmux_client_version} · server ${frame.tmux_server_version}`,
-        );
-        setMachineConnectionEpoch(frame.machine_connection_epoch);
-        setSelectionEpoch(frame.selection_epoch);
-        setSessions(frame.sessions);
-        setError("");
-      } else if (frame.type === "writer.state") {
-        setWriterRole(frame.role);
-        setWriterAvailable(frame.writer_available);
-      } else if (frame.type === "operation.result") {
-        setOperationStatus(`${frame.outcome}: ${frame.message}`);
-        if (frame.outcome === "ambiguous") {
-          setError(
-            "The target effect is unknown. OwlMux did not retry it; inspect the fresh chooser before acting again.",
-          );
-        } else if (frame.outcome === "failed") {
-          setError(frame.message);
-        } else {
-          setError("");
-        }
-      } else if (frame.type === "workspace.projection") {
-        setMachineConnectionEpoch(frame.machine_connection_epoch);
-        pendingProjection.current = {
-          metadata: frame,
-          snapshots: new Map(frame.panes.map((pane) => [pane.pane_id, []])),
-          completed: new Set(),
-        };
-      } else if (frame.type === "workspace.pane_snapshot") {
-        const pending = pendingProjection.current;
-        if (pending === null) throw new Error("snapshot without projection");
-        pending.snapshots.get(frame.pane_id)?.push(frame.data);
-        if (frame.final) pending.completed.add(frame.pane_id);
-      } else if (frame.type === "workspace.output") {
-        if (frame.workspace_epoch !== currentWorkspaceEpoch.current) return;
-        const sink = paneSinks.current.get(frame.pane_id);
-        if (sink !== undefined) {
-          if (!sink.enqueue(frame.data)) failRenderer();
-        } else {
-          pendingOutputBytes.current += frame.data.length;
-          if (pendingOutputBytes.current > MAX_RENDER_QUEUE_BYTES) {
-            failRenderer();
-            return;
-          }
-          const queued = pendingOutput.current.get(frame.pane_id) ?? [];
-          queued.push(frame.data);
-          pendingOutput.current.set(frame.pane_id, queued);
-        }
-      } else if (frame.type === "workspace.error") {
-        setError(frame.message);
-      }
-    };
-    const active = client.openAttachment(
-      machine.machine_id,
-      onFrame,
-      () => {
-        resetProjection();
-        setPhase("failed");
-        setWriterRole("observer");
-      },
-      onAuthenticationFailure,
-    );
-    attachment.current = active;
-    return () => {
-      active.dispose();
-      attachment.current = null;
-      resetProjection();
-    };
-  }, [client, failRenderer, machine.machine_id, onAuthenticationFailure]);
-
-  function attachmentEpoch(): string {
-    return projection?.metadata.workspace_epoch ?? selectionEpoch;
-  }
-
-  function preferredSize(): { columns: number; rows: number } {
-    return {
-      columns: projection?.metadata.window.width ?? 120,
-      rows: projection?.metadata.window.height ?? 36,
-    };
-  }
-
-  function changeWriter(takeover: boolean) {
-    const epoch = attachmentEpoch();
-    if (!machineConnectionEpoch || !epoch) return;
-    const size = preferredSize();
-    try {
-      if (takeover) {
-        attachment.current?.takeOverWriter(machineConnectionEpoch, epoch, size.columns, size.rows);
-      } else {
-        attachment.current?.claimWriter(machineConnectionEpoch, epoch, size.columns, size.rows);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Writer request was not queued.");
-    }
-  }
-
-  function createSession(event: FormEvent<HTMLFormElement>) {
+  async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    const name = String(new FormData(form).get("session-name") ?? "");
+    const name = String(new FormData(form).get("name") ?? "");
+    await onCreate(name);
+    form.reset();
+  }
+  async function copy(value: string) {
     try {
-      attachment.current?.createSession(machineConnectionEpoch, selectionEpoch, name);
-      form.reset();
+      await navigator.clipboard.writeText(value);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Session creation was not queued.");
+      onCopyError(reason);
     }
   }
-
-  function resizeClient(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (projection === null) return;
-    const data = new FormData(event.currentTarget);
-    try {
-      attachment.current?.resize(
-        machineConnectionEpoch,
-        projection.metadata.workspace_epoch,
-        Number(data.get("columns")),
-        Number(data.get("rows")),
-      );
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Resize was not queued.");
-    }
-  }
-
-  const sendInput = useCallback(
-    (paneId: string, data: Uint8Array) => {
-      if (projection === null) return;
-      if (data.length > ATTACHMENT_MAX_INPUT_BYTES) {
-        setError(
-          `Paste is larger than the ${ATTACHMENT_MAX_INPUT_BYTES}-byte input bound. Paste a smaller chunk explicitly.`,
-        );
-        return;
-      }
-      if (data.length > 256 && !window.confirm(`Send ${data.length} bytes to target tmux?`)) return;
-      try {
-        attachment.current?.sendPaneInput(
-          machineConnectionEpoch,
-          projection.metadata.workspace_epoch,
-          paneId,
-          data,
-        );
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "Pane input was rejected.");
-      }
-    },
-    [machineConnectionEpoch, projection],
-  );
-
-  const selectPane = useCallback(
-    (paneId: string) => {
-      if (projection === null) return;
-      try {
-        attachment.current?.selectPane(
-          machineConnectionEpoch,
-          projection.metadata.workspace_epoch,
-          paneId,
-        );
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "Pane selection was not queued.");
-      }
-    },
-    [machineConnectionEpoch, projection],
-  );
-
-  function detach() {
-    try {
-      attachment.current?.detach();
-    } finally {
-      onClose();
-    }
-  }
-
   return (
-    <main className="workspace-shell">
-      <header className="workspace-header">
+    <main className="page-shell">
+      <header className="page-heading">
         <div>
-          <p className="eyebrow">Target-owned tmux · {writerRole}</p>
-          <h1>{machine.alias}</h1>
-          <p className="muted">
-            {phase} {tmuxVersion && `· ${tmuxVersion}`}
-          </p>
+          <p className="section-kicker">Management</p>
+          <h1>SSH credentials</h1>
+          <p>Deployment-owned generated Ed25519 keys for future constrained SSH connections.</p>
         </div>
-        <div className="workspace-actions">
-          {writerRole === "observer" && phase !== "connecting" && (
-            <button onClick={() => changeWriter(!writerAvailable)} type="button">
-              {writerAvailable ? "Claim writer" : "Take over writer"}
-            </button>
-          )}
-          {phase === "ready" && projection !== null && (
-            <button
-              className="secondary-action"
-              onClick={() =>
-                attachment.current?.returnToChooser(
-                  machineConnectionEpoch,
-                  projection.metadata.workspace_epoch,
-                )
-              }
-              type="button"
-            >
-              Return to chooser
-            </button>
-          )}
-          <button onClick={detach} type="button">
-            Detach
-          </button>
-        </div>
+        <button
+          className="button button-secondary"
+          disabled={disabled}
+          onClick={onReset}
+          type="button"
+        >
+          Reset default
+        </button>
       </header>
-
-      {error && <p className="error-banner">{error}</p>}
-      {operationStatus && (
-        <p aria-live="polite" className="muted">
-          {operationStatus}
-        </p>
-      )}
-      {phase === "selecting" && (
-        <section className="session-chooser">
-          <h2>Choose a current target session</h2>
-          <p className="muted">
-            Selection is always explicit. Creating a session requires current writer access.
-          </p>
-          <button
-            className="secondary-action"
-            onClick={() =>
-              attachment.current?.refreshSessions(machineConnectionEpoch, selectionEpoch)
-            }
-            type="button"
-          >
-            Refresh sessions
+      <fieldset disabled={disabled}>
+        <form className="inline-create-form" onSubmit={create}>
+          <label>
+            New generated credential name
+            <input maxLength={64} name="name" placeholder="Production credential" required />
+          </label>
+          <button className="button button-primary" type="submit">
+            Generate credential
           </button>
-          {sessions.length === 0 && <p>No target tmux sessions are currently running.</p>}
-          <ul className="resource-list">
-            {sessions.map((session) => (
-              <li key={`${session.session_id}:${session.session_created}`}>
-                <strong>{session.name}</strong>
-                <span>
-                  {session.session_id} · created {session.session_created} · {session.window_count}{" "}
-                  windows · {session.attached_client_count} attached clients
-                </span>
+        </form>
+        {loading && <LoadingCards label="Loading credentials…" />}
+        <div className="credential-list">
+          {credentials.map((credential) => (
+            <article className="credential-card" key={credential.ssh_credential_id}>
+              <header>
+                <div>
+                  <h2>{credential.name}</h2>
+                  <span>
+                    {credential.status} · {credential.bound_machine_count} bound Host
+                    {credential.bound_machine_count === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {credential.is_default && <span className="status-pill is-good">Default</span>}
+              </header>
+              <code>{credential.public_fingerprint_sha256}</code>
+              <div className="row-actions">
                 <button
-                  onClick={() =>
-                    attachment.current?.selectSession(
-                      machineConnectionEpoch,
-                      selectionEpoch,
-                      session.session_id,
-                      session.session_created,
-                    )
-                  }
+                  className="button button-primary button-compact"
+                  onClick={() => void copy(credential.public_key)}
                   type="button"
                 >
-                  Open
+                  Copy public key
                 </button>
-              </li>
-            ))}
-          </ul>
-          <form className="compact-form" onSubmit={createSession}>
-            <label htmlFor="session-name">New target tmux session</label>
-            <input
-              disabled={writerRole !== "writer"}
-              id="session-name"
-              maxLength={64}
-              name="session-name"
-              required
-            />
-            <button disabled={writerRole !== "writer"} type="submit">
-              Create session
-            </button>
-          </form>
-        </section>
-      )}
-      {phase === "ready" && projection !== null && (
-        <section className="terminal-panel">
-          <header className="target-window-header">
-            <div>
-              <strong>{projection.metadata.window.name}</strong>
-              <span>
-                {projection.metadata.window.window_id} · {projection.metadata.window.width}×
-                {projection.metadata.window.height} · {projection.metadata.panes.length} visible
-                panes
-              </span>
-            </div>
-            <div className="resource-actions">
-              {projection.metadata.windows.map((windowSummary) => (
                 <button
-                  className={windowSummary.active ? "" : "secondary-action"}
-                  disabled={writerRole !== "writer" || windowSummary.active}
-                  key={windowSummary.window_id}
-                  onClick={() =>
-                    attachment.current?.selectWindow(
-                      machineConnectionEpoch,
-                      projection.metadata.workspace_epoch,
-                      windowSummary.window_id,
-                    )
-                  }
+                  className="button button-secondary button-compact"
+                  onClick={() => onRename(credential)}
                   type="button"
                 >
-                  {windowSummary.name}
+                  Rename
                 </button>
-              ))}
-              <button
-                className="secondary-action"
-                disabled={writerRole !== "writer"}
-                onClick={() =>
-                  attachment.current?.refresh(
-                    machineConnectionEpoch,
-                    projection.metadata.workspace_epoch,
-                  )
-                }
-                type="button"
-              >
-                Refresh projection
-              </button>
-            </div>
-          </header>
-          {writerRole === "writer" && (
-            <form className="resize-form" onSubmit={resizeClient}>
-              <label>
-                Columns
-                <input
-                  defaultValue={projection.metadata.window.width}
-                  key={`columns-${projection.metadata.workspace_epoch}`}
-                  max={ATTACHMENT_MAX_DIMENSION}
-                  min={1}
-                  name="columns"
-                  type="number"
-                />
-              </label>
-              <label>
-                Rows
-                <input
-                  defaultValue={projection.metadata.window.height}
-                  key={`rows-${projection.metadata.workspace_epoch}`}
-                  max={ATTACHMENT_MAX_DIMENSION}
-                  min={1}
-                  name="rows"
-                  type="number"
-                />
-              </label>
-              <button type="submit">Resize target client</button>
-            </form>
-          )}
-          <div
-            aria-label="Target-authoritative tmux pane layout"
-            className="pane-layout"
-            style={{
-              aspectRatio: `${projection.metadata.window.width} / ${projection.metadata.window.height}`,
-            }}
-            title={projection.metadata.window.layout}
-          >
-            {projection.metadata.panes.map((pane) => (
-              <PaneTerminal
-                chunks={projection.snapshots.get(pane.pane_id) ?? []}
-                key={`${projection.metadata.workspace_epoch}:${pane.pane_id}`}
-                onInput={sendInput}
-                onSelect={selectPane}
-                onSink={registerSink}
-                pane={pane}
-                selectable={writerRole === "writer"}
-                window={projection.metadata.window}
-                writable={writerRole === "writer" && pane.active}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+                {!credential.is_default && credential.status === "active" && (
+                  <button
+                    className="button button-secondary button-compact"
+                    onClick={() => onDefault(credential)}
+                    type="button"
+                  >
+                    Make default
+                  </button>
+                )}
+                {!credential.is_default &&
+                  credential.status === "active" &&
+                  credential.bound_machine_count === 0 && (
+                    <button
+                      className="button button-danger button-compact"
+                      onClick={() => onRetire(credential)}
+                      type="button"
+                    >
+                      Retire
+                    </button>
+                  )}
+              </div>
+            </article>
+          ))}
+        </div>
+      </fieldset>
     </main>
   );
 }
 
-function PaneTerminal({
-  chunks,
-  onInput,
-  onSelect,
-  onSink,
-  pane,
-  selectable,
-  window,
-  writable,
-}: {
-  chunks: Array<Uint8Array>;
-  onInput: (paneId: string, data: Uint8Array) => void;
-  onSelect: (paneId: string) => void;
-  onSink: (paneId: string, sink: PaneSink | null) => void;
-  pane: AttachmentPane;
-  selectable: boolean;
-  window: AttachmentWindow;
-  writable: boolean;
-}) {
-  const element = useRef<HTMLDivElement | null>(null);
-  const instanceRef = useRef<Terminal | null>(null);
-  const writableRef = useRef(writable);
-
-  useEffect(() => {
-    writableRef.current = writable;
-    if (instanceRef.current !== null) {
-      instanceRef.current.options.disableStdin = !writable;
-      if (writable) instanceRef.current.focus();
-    }
-  }, [writable]);
-
-  useEffect(() => {
-    if (element.current === null) return;
-    const instance = new Terminal({
-      allowProposedApi: false,
-      cols: pane.width,
-      convertEol: false,
-      cursorBlink: false,
-      disableStdin: !writableRef.current,
-      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      fontSize: 12,
-      rows: pane.height,
-      scrollback: 0,
-      theme: { background: "#111827", foreground: "#e5e7eb" },
-      windowOptions: {},
-    });
-    instance.open(element.current);
-    instanceRef.current = instance;
-    let disposed = false;
-    let writing = false;
-    let queuedBytes = 0;
-    const queue: Array<Uint8Array> = [];
-    const drain = () => {
-      if (disposed || writing) return;
-      const data = queue.shift();
-      if (data === undefined) return;
-      writing = true;
-      instance.write(data, () => {
-        writing = false;
-        queuedBytes -= data.length;
-        drain();
-      });
-    };
-    const sink: PaneSink = {
-      enqueue(data) {
-        if (disposed || queuedBytes + data.length > MAX_RENDER_QUEUE_BYTES) return false;
-        const copy = data.slice();
-        queue.push(copy);
-        queuedBytes += copy.length;
-        drain();
-        return true;
-      },
-    };
-    for (const chunk of chunks) {
-      if (!sink.enqueue(chunk)) break;
-    }
-    const input = instance.onData((data) => {
-      if (writableRef.current) onInput(pane.pane_id, new TextEncoder().encode(data));
-    });
-    onSink(pane.pane_id, sink);
-    if (writableRef.current) instance.focus();
-    return () => {
-      disposed = true;
-      input.dispose();
-      onSink(pane.pane_id, null);
-      if (instanceRef.current === instance) instanceRef.current = null;
-      instance.dispose();
-    };
-  }, [chunks, onInput, onSink, pane]);
-
+function AuditPage({ events, loading }: { events: Array<AuditEventSummary>; loading: boolean }) {
   return (
-    <article
-      className={pane.active ? "tmux-pane is-active" : "tmux-pane"}
-      style={{
-        height: `${(pane.height / window.height) * 100}%`,
-        left: `${(pane.left / window.width) * 100}%`,
-        top: `${(pane.top / window.height) * 100}%`,
-        width: `${(pane.width / window.width) * 100}%`,
-      }}
-    >
-      <header className="tmux-pane-header">
-        <span>{pane.pane_id}</span>
-        <span>{pane.title || pane.current_command || "terminal"}</span>
-        {!pane.active && (
-          <button disabled={!selectable} onClick={() => onSelect(pane.pane_id)} type="button">
-            Select pane
-          </button>
-        )}
+    <main className="page-shell">
+      <header className="page-heading">
+        <div>
+          <p className="section-kicker">Management</p>
+          <h1>Audit</h1>
+          <p>
+            Newest safe durable control events. Terminal data and internal payloads never appear.
+          </p>
+        </div>
       </header>
-      <div
-        aria-label={`${writable ? "Writable" : "Observer"} terminal ${pane.pane_id}`}
-        className="tmux-pane-terminal"
-        ref={element}
-      />
-    </article>
+      {loading && <LoadingCards label="Loading audit events…" />}
+      {!loading && events.length === 0 && (
+        <div className="empty-state compact">
+          <h2>No audit events yet</h2>
+        </div>
+      )}
+      <div className="audit-list" role="list">
+        {events.map((event) => (
+          <article className="audit-row" key={event.audit_event_id} role="listitem">
+            <span className={`audit-outcome is-${event.outcome_class}`} />
+            <div>
+              <strong>{event.action}</strong>
+              <span>
+                {event.resource_kind} · {event.outcome_class}
+              </span>
+            </div>
+            <time dateTime={event.occurred_at}>{event.occurred_at}</time>
+          </article>
+        ))}
+      </div>
+    </main>
   );
+}
+
+function DeploymentPage({
+  deployment,
+  logout,
+  workspaceCount,
+}: {
+  deployment: DeploymentPresentation | null;
+  logout: () => void;
+  workspaceCount: number;
+}) {
+  return (
+    <main className="page-shell narrow-page">
+      <header className="page-heading">
+        <div>
+          <p className="section-kicker">Management</p>
+          <h1>Deployment</h1>
+          <p>Safe current Deployment and Browser-session information.</p>
+        </div>
+      </header>
+      <section className="settings-card">
+        <dl className="detail-grid">
+          <Detail label="Deployment ID" value={deployment?.deployment_id ?? "Loading…"} code />
+          <Detail label="Profile" value={deployment?.profile ?? "Loading…"} />
+          <Detail
+            label="Configuration epoch"
+            value={String(deployment?.config_epoch ?? "Loading…")}
+          />
+          <Detail label="Server build" value={deployment?.server_build_id ?? "Loading…"} code />
+          <Detail label="Open workspace tabs" value={String(workspaceCount)} />
+        </dl>
+      </section>
+      <section className="settings-card">
+        <h2>Browser authentication</h2>
+        <p>
+          The API key and workspace tabs exist only in this page. Logout closes OwlMux connections
+          and clears the key without stopping target work.
+        </p>
+        <button className="button button-danger" onClick={logout} type="button">
+          Log out and clear key
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function ConfirmDialog({
+  confirmation,
+  disabled,
+  onClose,
+}: {
+  confirmation: Confirmation;
+  disabled: boolean;
+  onClose: () => void;
+}) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await confirmation.onConfirm();
+    onClose();
+  }
+  return (
+    <Dialog onClose={onClose} title={confirmation.title}>
+      <form className="dialog-form" onSubmit={submit}>
+        <p>{confirmation.description}</p>
+        <div className="dialog-actions">
+          <button
+            className="button button-secondary"
+            disabled={disabled}
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className={confirmation.danger ? "button button-danger" : "button button-primary"}
+            disabled={disabled}
+            type="submit"
+          >
+            {confirmation.confirmLabel}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function TextDialog({
+  disabled,
+  onClose,
+  request,
+}: {
+  disabled: boolean;
+  onClose: () => void;
+  request: TextRequest;
+}) {
+  const [value, setValue] = useState(request.initialValue);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await request.onSubmit(value);
+    onClose();
+  }
+  return (
+    <Dialog onClose={onClose} title={request.title}>
+      <form className="dialog-form" onSubmit={submit}>
+        <label>
+          {request.label}
+          <input
+            autoFocus
+            maxLength={64}
+            onChange={(event) => setValue(event.currentTarget.value)}
+            required
+            value={value}
+          />
+        </label>
+        <div className="dialog-actions">
+          <button
+            className="button button-secondary"
+            disabled={disabled}
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button className="button button-primary" disabled={disabled} type="submit">
+            {request.submitLabel}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function EnrollmentDialog({
+  disclosure,
+  onClose,
+  onCopyError,
+}: {
+  disclosure: EnrollmentDisclosure;
+  onClose: () => void;
+  onCopyError: (reason: unknown) => void;
+}) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(disclosure.token);
+    } catch (reason) {
+      onCopyError(reason);
+    }
+  }
+  return (
+    <Dialog onClose={onClose} title="One-use Relay enrollment token">
+      <div className="dialog-form">
+        <p>
+          Copy it now. It expires in {disclosure.expiresIn} seconds and is never returned by a later
+          read.
+        </p>
+        <code className="token-disclosure">{disclosure.token}</code>
+        <div className="dialog-actions">
+          <button className="button button-secondary" onClick={onClose} type="button">
+            Clear token
+          </button>
+          <button className="button button-primary" onClick={() => void copy()} type="button">
+            Copy token
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function Dialog({
+  children,
+  onClose,
+  title,
+}: {
+  children: ReactNode;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section aria-labelledby="dialog-title" aria-modal="true" className="dialog" role="dialog">
+        <header>
+          <h2 id="dialog-title">{title}</h2>
+          <button aria-label="Close dialog" className="icon-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function Detail({ code = false, label, value }: { code?: boolean; label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{code ? <code>{value}</code> : value}</dd>
+    </div>
+  );
+}
+
+function StatusPill({ machine }: { machine: MachineSummary }) {
+  return (
+    <span className={`status-pill ${reachabilityClass(machine.reachability)}`}>
+      {reachabilityLabel(machine.reachability)}
+    </span>
+  );
+}
+
+function LoadingCards({ label }: { label: string }) {
+  return (
+    <div className="loading-state" aria-live="polite">
+      <span className="activity-dot" />
+      {label}
+    </div>
+  );
+}
+
+function hostLifecycleConfirmation(
+  machine: MachineSummary,
+  action: "disable" | "revoke" | "re-enroll",
+  execute: (machine: MachineSummary, action: "disable" | "revoke" | "re-enroll") => Promise<void>,
+): Confirmation {
+  const labels = {
+    disable: ["Disable Host", "Disable Host"],
+    revoke: ["Revoke Relay access", "Revoke Relay"],
+    "re-enroll": ["Re-enroll Relay", "Start re-enrollment"],
+  } as const;
+  return {
+    confirmLabel: labels[action][1],
+    danger: action !== "re-enroll",
+    description: `${labels[action][0]} for ${machine.alias}? Current OwlMux access will close. Target tmux and its processes will not be stopped.`,
+    onConfirm: () => execute(machine, action),
+    title: labels[action][0],
+  };
+}
+
+function normalizeRoute(path: string): string {
+  if (path === "/workspaces") return path;
+  if (path === "/hosts" || path === "/hosts/new") return path;
+  if (path.startsWith("/hosts/") && path.length > "/hosts/".length) return path;
+  if (["/ssh-credentials", "/audit", "/deployment"].includes(path)) return path;
+  return "/workspaces";
+}
+
+function shortId(value: string): string {
+  return value.length <= 12 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function reachabilityClass(value: MachineSummary["reachability"]): string {
+  switch (value) {
+    case "reachable":
+      return "is-good";
+    case "connecting":
+      return "is-warning";
+    case "temporarily_unavailable":
+    case "owner_unreachable":
+      return "is-danger";
+    case "unknown":
+      return "is-neutral";
+  }
+}
+
+function reachabilityLabel(value: MachineSummary["reachability"]): string {
+  switch (value) {
+    case "reachable":
+      return "Reachable";
+    case "connecting":
+      return "Connecting";
+    case "temporarily_unavailable":
+      return "Unavailable";
+    case "owner_unreachable":
+      return "Owner unreachable";
+    case "unknown":
+      return "Not connected";
+  }
+}
+
+function hostLifecycleLabel(value: MachineSummary["lifecycle"]): string {
+  switch (value) {
+    case "pending":
+      return "Pending Relay enrollment";
+    case "verifying":
+      return "Verifying target access";
+    case "active":
+      return "Active Host";
+    case "disabled":
+      return "Disabled Host";
+  }
 }

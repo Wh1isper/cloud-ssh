@@ -42,17 +42,17 @@ Reviewed Server types and generated artifacts own exact JSON schemas, error/stat
 
 ## 2. Route families
 
-| Surface                 | Representative route                                                | Authentication                                               |
-| ----------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Liveness                | `GET /health`                                                       | None; process liveness only                                  |
-| Readiness               | `GET /ready`                                                        | None; bounded dependency status                              |
-| Deployment presentation | `GET /api/v1/deployment`                                            | Bearer API key                                               |
-| SSH credentials         | `/api/v1/ssh-credentials/...`                                       | Bearer API key                                               |
-| Machines/enrollment     | `/api/v1/machines/...`                                              | Bearer API key                                               |
-| Attachment              | `/api/v1/machines/{machine_id}/attachment` WebSocket                | Exact Origin, then first `auth.api_key` frame                |
-| Relay enrollment/proof  | `/relay/v1/enroll` WebSocket                                        | One-use enrollment token first frame, then provisional proof |
-| Relay tunnel            | `/relay/v1/tunnel` WebSocket                                        | Active Machine-bound Relay signature transcript              |
-| SPA                     | `/login`, `/machines`, `/machines/{machine_id}`, `/ssh-credentials` | Assets public; all data remains authenticated                |
+| Surface                 | Representative route                                                                                        | Authentication                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Liveness                | `GET /health`                                                                                               | None; process liveness only                                  |
+| Readiness               | `GET /ready`                                                                                                | None; bounded dependency status                              |
+| Deployment presentation | `GET /api/v1/deployment`                                                                                    | Bearer API key                                               |
+| SSH credentials         | `/api/v1/ssh-credentials/...`                                                                               | Bearer API key                                               |
+| Machines/enrollment     | `/api/v1/machines/...`                                                                                      | Bearer API key                                               |
+| Attachment              | `/api/v1/machines/{machine_id}/attachment` WebSocket                                                        | Exact Origin, then first `auth.api_key` frame                |
+| Relay enrollment/proof  | `/relay/v1/enroll` WebSocket                                                                                | One-use enrollment token first frame, then provisional proof |
+| Relay tunnel            | `/relay/v1/tunnel` WebSocket                                                                                | Active Machine-bound Relay signature transcript              |
+| SPA                     | `/login`, `/workspaces`, `/hosts`, `/hosts/new`, `/hosts/{id}`, `/ssh-credentials`, `/audit`, `/deployment` | Assets public; all data remains authenticated                |
 
 Every protected HTTP request independently validates `Authorization: Bearer` at the accepting node before resource or owner lookup. Route IDs are bounded typed values and never authorization evidence.
 
@@ -70,7 +70,7 @@ The Browser keeps the key only in page memory and sends it on every protected HT
 
 Protected responses use explicit no-store policy where they contain sensitive control metadata. The raw key is never echoed. Browser authentication has no Server-side persistence, expiry/refresh protocol, or logout request; logout is local key/state clearing. CORS is disabled by default; if explicitly enabled for a trusted integration origin, that policy does not weaken Bearer verification.
 
-A Browser logout action closes public/one-hop attachments, clears in-memory key, resource data, pending operations, terminal renderers, and local authenticated navigation state, then returns to `/login`. It does not need to know which node owns a Machine.
+A Browser logout action closes every public/one-hop attachment in the page, clears the in-memory key, workspace tabs, resource data, pending operations, terminal renderers, and local authenticated navigation state, then returns to `/login`. Reload, page close, and navigation away have the same page-lifetime effect. Internal SPA navigation among OwlMux routes retains the key and workspace tabs. None of these actions needs to know which node owns a Machine.
 
 ## 4. Public contract rules
 
@@ -117,9 +117,17 @@ MachineSummary {
     retry_after?,
     last_safe_diagnostic?,
 }
+
+MachineDetail {
+    MachineSummary,
+    target_account,
+    tmux_path,
+    tmux_socket_identity,
+    host_identity,
+}
 ```
 
-Private keys, envelopes, encryption context/key operations, identity-file paths, raw host-key material, complete SSH config, Relay/internal network endpoints, node leases/config proofs, internal challenge/HMAC transcripts, stream IDs, token digests, and unsafe target diagnostics are never ordinary presentation fields. Reachability is advisory and exposes no node identity or address.
+The authenticated detail presentation returns the fixed public target identity and tmux scope needed to review one saved Host. These values are immutable after creation; a target account, expected host public key, tmux path, or socket-identity change requires a new Machine. Private keys, envelopes, encryption context/key operations, identity-file paths, complete SSH config, unverified host-key diagnostics, Relay/internal network endpoints, node leases/config proofs, internal challenge/HMAC transcripts, stream IDs, token digests, and unsafe target diagnostics are never ordinary presentation fields. Reachability is advisory and exposes no node identity or address.
 
 ### 5.1 Credential mutations
 
@@ -227,6 +235,8 @@ Client messages after authentication cover:
 - observed window/pane selection and Browser resize;
 - literal bounded pane input.
 
+The product UI labels the protocol writer as control: a free pointer exposes `Take control`, an occupied pointer exposes `Take over`, and the current holder shows `You have control` and `Writable`. It provides no rows/columns form. Only the current visible ready writer workspace measures its pane surface and xterm cell size, then sends bounded, debounced, deduplicated resize intent; observer and hidden workspace tabs never request target geometry changes. Claim and takeover use the best currently measured dimensions or the bounded default until a renderer is available. Target-authoritative replacement projection remains final.
+
 There is no generic execute, raw command, SSH option, destination, shell, tmux format, Relay endpoint, or broader tmux-management message. Target/control/WebSocket/internal-owner-WSS/owner replacement discards the workspace and returns through fresh origin authentication, owner resolution, probe, and chooser, never automatic session selection, input replay, or mutation replay. `temporarily_unavailable` may retry only under the Server's capped `retry_after` and a bounded Browser budget. A valid-but-WSS-unreachable owner returns `owner_unreachable`; Browser shows the operator fence/isolate-and-wait action and does not silently retry into takeover.
 
 Writer semantics, takeover ordering, epochs, rehydration, and ambiguity are owned by [04](04-ssh-tmux-attachment-and-roaming.md).
@@ -236,8 +246,8 @@ Writer semantics, takeover ordering, epochs, rehydration, and ambiguity are owne
 ```mermaid
 stateDiagram-v2
     [*] --> LoggedOut
-    LoggedOut --> Idle: user enters API key in memory
-    Idle --> Connecting: user opens Machine
+    LoggedOut --> Shell: user enters API key in memory
+    Shell --> Connecting: user opens Host in a new workspace tab
     Connecting --> Selecting: authentication and discovery succeed
     Connecting --> LoggedOut: API-key authentication fails
     Connecting --> Failed: connection or target setup fails
@@ -245,43 +255,52 @@ stateDiagram-v2
     Selecting --> Failed: selection/create fails
     Ready --> Selecting: return to chooser or replace connection
     Ready --> Failed: live connection fails
-    Selecting --> Idle: detach
-    Ready --> Idle: detach
-    Idle --> LoggedOut: clear key
-    Failed --> Connecting: explicit retry
+    Selecting --> Shell: detach or close this tab
+    Ready --> Shell: detach or close this tab
+    Failed --> Shell: close this tab
+    Failed --> Connecting: explicit reconnect
+    Shell --> LoggedOut: logout, reload, page close, or navigation away
 ```
 
-Browser discards old projection, pending mutation assumptions, and renderers before installing any new Machine connection or Attachment epoch. It never persists API key, node/owner placement, terminal bytes, projection, writer authority, or pending operation.
+The shell owns at most 16 page-memory workspace tabs. Each tab has one independent Attachment phase, session-title hint, projection, renderer set, and close/detach lifecycle. Switching tabs or navigating among internal SPA management pages preserves every tab and connection; only the active workspace is visible, and only a visible ready writer may generate automatic resize intent. Closing one tab disposes only its Attachment. Logout, reload, page close, or navigation away disposes all tabs and the shared API client. The Browser never persists a tab, API key, node/owner placement, terminal bytes, projection, writer authority, or pending operation.
 
-Writer status is orthogonal and limited to observer or writer; a claim/takeover is a pending request until its result. Current owner-process memory is authoritative. A higher Machine connection epoch invalidates every prior attachment. Native tmux clients remain outside Browser writer coordination.
+Browser discards old projection, pending mutation assumptions, and renderers before installing any new Machine connection or Attachment epoch within a tab. Writer status is orthogonal and limited to observer or writer; multiple tabs for one Machine remain separate attachments but still compete for the single owner-local writer pointer. A claim/takeover is a pending request until its result. Current owner-process memory is authoritative. A higher Machine connection epoch invalidates every prior attachment. Native tmux clients remain outside Browser writer coordination.
 
 ## 10. Information architecture
 
 ```mermaid
 flowchart LR
-    Login["/login"] --> Machines["/machines"]
-    Machines --> Machine["/machines/{machine_id}"]
-    Machines --> Credentials["/ssh-credentials"]
-    Machine --> Machines
-    Credentials --> Machines
+    Login["/login"] --> Workspaces["/workspaces"]
+    Workspaces --> Hosts["/hosts"]
+    Hosts --> NewHost["/hosts/new"]
+    Hosts --> Host["/hosts/{id}"]
+    Host --> Workspaces
+    Workspaces --> Credentials["/ssh-credentials"]
+    Workspaces --> Audit["/audit"]
+    Workspaces --> Deployment["/deployment"]
 ```
 
 ### 10.1 Login
 
-- one masked deployment API-key field;
+- one masked deployment API-key field and one `Open OwlMux` action;
 - key retained only in current page memory;
+- successful authentication enters `/workspaces`;
 - no alternate authentication mode, credential exchange, persistent login, or external redirect;
 - authentication failure clears entered key and resource state;
 - page refresh requires re-entry.
 
-### 10.2 Machines
+### 10.2 Hosts
 
-- list every Deployment Machine;
-- distinguish durable lifecycle from advisory owner/Relay reachability without exposing node identity or endpoints;
-- create, edit alias, enroll, disable, re-enroll, and rebind credential;
-- present active re-enrollment as an access-closing transition to tokenless `Pending`, followed by explicit one-use token issuance for the same fixed target scope;
-- show one-use enrollment token only at issuance;
-- show exact target public-key installation guidance and the durable enrollment outcome, never connection-local readiness or proof progress.
+`Host` is the product-UI name for one Machine API/domain resource. The Browser:
+
+- lists every Deployment Machine as a saved Host;
+- separates `/hosts`, `/hosts/new`, and `/hosts/{id}` list, creation, and detail journeys;
+- distinguishes durable lifecycle from advisory owner/Relay reachability without exposing node identity or endpoints;
+- creates one fixed target identity, edits alias, enrolls, disables, re-enrolls, and rebinds credential;
+- presents target account, expected host public key, tmux path, and socket identity as immutable detail fields;
+- presents active re-enrollment as an access-closing transition to tokenless `Pending`, followed by explicit one-use token issuance for the same fixed target scope;
+- shows a one-use enrollment token only at issuance;
+- shows exact target public-key installation guidance and the durable enrollment outcome, never connection-local readiness or proof progress.
 
 ### 10.3 SSH credentials
 
@@ -291,31 +310,41 @@ flowchart LR
 - never accept, reveal, or download private keys or mutate target authorization stores;
 - explain that rebind affects future SSH authentication while an existing authenticated connection may continue.
 
-### 10.4 Machine workspace
+### 10.4 Workspaces
 
-- normally begin at the explicit session chooser;
-- never auto-select a remembered session after attachment or connection replacement;
-- list all sessions within the bounded limit without auto-attach;
-- central `New session` action;
-- show writer/observer state and explicit takeover;
+- `/workspaces` begins with a searchable saved-Host launcher when no workspace tab is active;
+- opening a Host creates a new page-memory tab and independent Attachment, even when another tab already targets that Host;
+- each new or replacement Attachment begins at the explicit session chooser and never auto-selects a remembered session;
+- list all sessions within the bounded limit without auto-attach and provide one closed new-session action;
+- show control/view-only state, `Take control`, and explicit `Take over` without implying that each tab has an independent writer;
 - keep input disabled until ready/replacement hydration completes;
 - render tmux-authoritative layout and one xterm.js renderer per visible pane;
+- derive current visible writer size automatically without a rows/columns form;
+- retain tabs across internal navigation, close only the selected Attachment on tab close/detach, and clear all tabs at page-lifetime end;
 - distinguish safe route, SSH, host, tmux, shell-entry, and resource failures;
 - never label OwlMux as owner of target work.
 
+### 10.5 Audit and Deployment
+
+- `/audit` presents only safe durable control events and never terminal data or internal payloads;
+- `/deployment` presents safe identity/build/profile and current page workspace count;
+- both surfaces remain under the same origin, API key, trust domain, and application shell rather than creating an administration endpoint or login realm.
+
 ## 11. Frontend state boundaries
 
-| State                       | Browser treatment                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------------- |
-| Deployment API key          | Current page memory only; clear on failure/logout/reload                            |
-| Machine/credential metadata | Server-authoritative API data                                                       |
-| Owner/Relay reachability    | Advisory presentation with no node identity/endpoint                                |
-| Machine owner route         | Never Browser state; always resolved at Deployment origin                           |
-| Selection/projection        | Machine-connection-epoch and attachment-epoch-scoped memory with atomic replacement |
-| Writer state                | Current owner message only; never persisted; invalid across connection epoch        |
-| Terminal bytes/scrollback   | xterm.js memory; never Web storage/cache                                            |
-| Pending operation           | Correlation-only; no replay                                                         |
-| UI display preferences      | Local, non-authoritative, and contain no credentials/terminal content               |
+| State                       | Browser treatment                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| Deployment API key          | Current page memory only; clear on failure/logout/reload/page close/navigation away            |
+| Internal SPA route          | Page-memory navigation only; changing it retains the key and workspace tabs                    |
+| Workspace tabs/active tab   | At most 16 in page memory; each owns one Attachment; never serialized or restored              |
+| Machine/credential metadata | Server-authoritative API data                                                                  |
+| Owner/Relay reachability    | Advisory presentation with no node identity/endpoint                                           |
+| Machine owner route         | Never Browser state; always resolved at Deployment origin                                      |
+| Selection/projection        | Tab-local Machine-connection-epoch and attachment-epoch-scoped memory with atomic replacement  |
+| Writer state                | Current owner message only; shared pointer semantics across same-Machine tabs; never persisted |
+| Terminal bytes/scrollback   | Tab-local xterm.js memory; never Web storage/cache                                             |
+| Pending operation           | Tab-local correlation only; no replay                                                          |
+| UI display preferences      | Local, non-authoritative, and contain no credentials/terminal content                          |
 
 Service workers MUST NOT cache protected API responses, terminal data, or API keys.
 
@@ -340,12 +369,13 @@ Same-origin XSS can steal the in-memory API key and obtains complete deployment 
 
 - Invalid/unauthenticated HTTP input fails before database/target side effects.
 - Invalid or late WebSocket auth closes before Attachment allocation.
-- WebSocket/internal-owner-WSS protocol fault or slow Browser closes only that one-hop Attachment.
-- Browser reload clears API key and live state but leaves target tmux.
+- WebSocket/internal-owner-WSS protocol fault or slow Browser closes only that one-hop Attachment and leaves sibling page-memory workspace tabs independent.
+- Closing one workspace tab disposes only that Attachment; Browser reload, logout, page close, or navigation away clears the API key and every page-local tab but leaves target tmux.
+- Internal SPA navigation retains the key and workspace tabs and does not reconnect or reauthenticate them.
 - Non-owner Browser/API ingress loss closes only connections through it; current owner and target remain; a still-open page reconnects through the Deployment origin.
 - Owner loss/fence closes its Relay/Attachment/SSH/tmux/writer state; after node-lease invalidity Relay claims a higher connection epoch and Browser performs fresh origin authentication/probe/selection.
 - A valid owner unreachable from Browser/API ingress returns `owner_unreachable`; no automatic retry steals it, and the operator fences/stops/isolates the owner and waits for lease expiry.
-- Ordinary node restart with an unchanged key closes affected attachments, but a still-open page may use its in-memory key for fresh WebSocket authentication; cluster-wide key replacement makes that candidate fail and clear, while reload/navigation/logout/renderer loss always requires re-entry.
+- Ordinary node restart with an unchanged key closes affected attachments, but a still-open page may use its in-memory key for fresh WebSocket authentication; cluster-wide key replacement makes that candidate fail and clear, while reload/logout/page close/navigation away always requires re-entry.
 - Node join does not move existing owners or Attachments, exposes no node selection to Browser, and creates no rebalance.
 - Machine/credential invalidation is serialized through the current owner or delayed until lease invalidity, then closes affected live access without target cleanup.
 - Ambiguous target or internal owner-WSS operations are never replayed.
@@ -365,6 +395,9 @@ Conformance proves:
 - Browser never stores or selects a Server node; load-balancer stickiness is optional; ingress/owner loss reconnects through the same origin;
 - generated credential APIs accept no private-key body or algorithm selector and never return private material or proxy it to an owner;
 - malformed, oversized, stale incarnation/connection/attachment epoch, unknown-version, owner-WSS loss, and slow-client cases fail boundedly;
-- full Browser journey enters key, lists all Machines, resolves owner, selects/creates, hydrates, writes, returns to chooser, and reconnects to surviving target work after ingress and owner failures; safe transient retry obeys capped `retry_after`, every replacement returns to a fresh chooser, and no writer/input/mutation is restored or replayed;
+- full Browser journey enters the key through `Open OwlMux`, lands on `/workspaces`, manages Machine resources through Host list/create/detail pages, traverses Credentials/Audit/Deployment on the same origin, resolves an owner, selects/creates, hydrates, writes, returns to chooser, and reconnects to surviving target work after ingress and owner failures;
+- Chromium proves at least two independent same-page workspace tabs, same-Machine writer takeover/demotion, switching and closing only the active tab, internal navigation retention, the 16-tab page bound, and full-page reload clearing;
+- current visible writer viewport changes generate bounded automatic resize and target-authoritative replacement geometry, with no rows/columns form and no observer/hidden-tab target resize;
+- safe transient retry obeys capped `retry_after`, every replacement returns to a fresh chooser, and no writer/input/mutation is restored or replayed;
 - writer/takeover/rehydration/connection-epoch/no-replay behavior matches [04];
-- reload/navigation/logout/renderer loss requires API-key re-entry; ordinary unchanged-key node restart may reuse only the still-open page-memory candidate; coordinated key replacement rejects it; target work survives every case.
+- reload/logout/page close/navigation away requires API-key re-entry; internal SPA navigation does not; ordinary unchanged-key node restart may reuse only the still-open page-memory candidate; coordinated key replacement rejects it; target work survives every case.

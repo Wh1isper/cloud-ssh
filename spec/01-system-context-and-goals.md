@@ -214,8 +214,10 @@ sequenceDiagram
     participant SSHD as Target sshd
     participant Tmux as Target tmux
 
-    User->>Web: Enter Deployment API key in memory
-    Web->>Ingress: Open WebSocket at Deployment origin
+    User->>Web: Enter Deployment API key in memory and open OwlMux
+    Web->>Web: Enter Workspaces shell; choose one saved Host
+    Web->>Web: Create one bounded page-memory workspace tab
+    Web->>Ingress: Open WebSocket for its Machine ID at Deployment origin
     Ingress->>Ingress: Verify exact Origin and first auth frame
     Ingress->>DB: Resolve current Machine owner after auth
     DB-->>Ingress: Owner node, incarnation, and connection epoch
