@@ -18,6 +18,7 @@ use protocol::{
     ChallengePurpose, ClientFrame, CloseReason, MAX_DATA_BYTES, MAX_FRAME_BYTES, MAX_STREAMS,
     ServerFrame, VERSION, signature_message,
 };
+use ssh_key::{Algorithm, HashAlg, PublicKey};
 use state::RelayState;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -54,6 +55,7 @@ struct Options {
     state_path: PathBuf,
     account: Option<String>,
     confirm_ready: bool,
+    expected_host_key_sha256: Option<String>,
 }
 
 #[tokio::main]
@@ -89,6 +91,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                 &options.state_path,
                 &mut state,
                 options.confirm_ready,
+                options.expected_host_key_sha256.as_deref(),
             )
             .await?;
         }
@@ -117,6 +120,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                     &options.state_path,
                     &mut state,
                     options.confirm_ready,
+                    options.expected_host_key_sha256.as_deref(),
                 )
                 .await?;
             }
@@ -154,6 +158,7 @@ fn parse_options() -> Result<Options, Box<dyn Error + Send + Sync>> {
     let mut state_path = None;
     let mut account = None;
     let mut confirm_ready = false;
+    let mut expected_host_key_sha256 = None;
     while let Some(argument) = arguments.next() {
         if argument == "--confirm-ready" {
             confirm_ready = true;
@@ -164,6 +169,7 @@ fn parse_options() -> Result<Options, Box<dyn Error + Send + Sync>> {
             "--server" => server = Some(value),
             "--state" => state_path = Some(PathBuf::from(value)),
             "--account" => account = Some(value),
+            "--expected-host-key-sha256" => expected_host_key_sha256 = Some(value),
             _ => return Err(format!("unknown option: {argument}").into()),
         }
     }
@@ -179,6 +185,7 @@ fn parse_options() -> Result<Options, Box<dyn Error + Send + Sync>> {
         server.as_deref(),
         account.as_deref(),
         confirm_ready,
+        expected_host_key_sha256.as_deref(),
     )?;
     Ok(Options {
         command,
@@ -186,6 +193,7 @@ fn parse_options() -> Result<Options, Box<dyn Error + Send + Sync>> {
         state_path: state_path.ok_or("--state is required")?,
         account,
         confirm_ready,
+        expected_host_key_sha256,
     })
 }
 
@@ -194,16 +202,24 @@ fn validate_command_options(
     server: Option<&str>,
     account: Option<&str>,
     confirm_ready: bool,
+    expected_host_key_sha256: Option<&str>,
 ) -> Result<(), &'static str> {
     match command {
         Command::Start if server.is_none() => Err("--server is required for start"),
         Command::Enroll if server.is_none() => Err("--server is required for enrollment"),
         Command::Enroll if account.is_none() => Err("--account is required for enrollment"),
         Command::Run if server.is_none() => Err("--server is required for run"),
-        Command::Run if account.is_some() || confirm_ready => {
+        Command::Run
+            if account.is_some() || confirm_ready || expected_host_key_sha256.is_some() =>
+        {
             Err("run accepts only --server and --state")
         }
-        Command::Reset if server.is_some() || account.is_some() || confirm_ready => {
+        Command::Reset
+            if server.is_some()
+                || account.is_some()
+                || confirm_ready
+                || expected_host_key_sha256.is_some() =>
+        {
             Err("reset accepts only --state")
         }
         _ => Ok(()),
@@ -215,10 +231,10 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!(
-        "  owlmux-relay start  --server <ws-origin> --state <path> [--account <user>] [--confirm-ready]"
+        "  owlmux-relay start  --server <ws-origin> --state <path> [--account <user>] [--confirm-ready] [--expected-host-key-sha256 <fingerprint>]"
     );
     println!(
-        "  owlmux-relay enroll --server <ws-origin> --state <path> --account <user> [--confirm-ready]"
+        "  owlmux-relay enroll --server <ws-origin> --state <path> --account <user> [--confirm-ready] [--expected-host-key-sha256 <fingerprint>]"
     );
     println!("  owlmux-relay run    --server <ws-origin> --state <path>");
     println!("  owlmux-relay reset  --state <path>");
@@ -233,6 +249,7 @@ async fn enroll(
     state_path: &Path,
     state: &mut RelayState,
     confirm_ready: bool,
+    expected_host_key_sha256: Option<&str>,
 ) -> RelayResult<()> {
     if state.route_revision.is_some() {
         return Err(RelayError::State("Relay is already enrolled"));
@@ -295,7 +312,7 @@ async fn enroll(
         &nonce,
     )
     .await?;
-    match enrollment_stream(&mut socket, state, state_path).await {
+    match enrollment_stream(&mut socket, state, state_path, expected_host_key_sha256).await {
         Ok(()) | Err(RelayError::Transport) => confirm_enrollment(server, state).await,
         Err(error) => Err(error),
     }
@@ -335,35 +352,130 @@ fn confirm_target_authorization(frame: ServerFrame, confirmed: bool) -> RelayRes
     }
 }
 
+fn confirm_host_key(
+    host_identity: &str,
+    advertised_fingerprint_sha256: &str,
+    expected_fingerprint: Option<&str>,
+) -> RelayResult<()> {
+    let mut fields = host_identity.split_ascii_whitespace();
+    let algorithm = fields.next().ok_or(RelayError::Protocol)?;
+    let encoded_key = fields.next().ok_or(RelayError::Protocol)?;
+    if fields.next().is_some() || format!("{algorithm} {encoded_key}") != host_identity {
+        return Err(RelayError::Protocol);
+    }
+    let public_key = PublicKey::from_openssh(host_identity).map_err(|_| RelayError::Protocol)?;
+    if public_key.algorithm() != Algorithm::Ed25519 {
+        return Err(RelayError::Protocol);
+    }
+    let fingerprint_sha256 = public_key.fingerprint(HashAlg::Sha256).to_string();
+    if fingerprint_sha256 != advertised_fingerprint_sha256 {
+        return Err(RelayError::Protocol);
+    }
+
+    println!("The authenticity of host '127.0.0.1:22' can't be established.");
+    println!("ED25519 key fingerprint is {fingerprint_sha256}.");
+    if let Some(expected) = expected_fingerprint {
+        if expected != fingerprint_sha256 {
+            return Err(RelayError::State(
+                "discovered SSH host-key fingerprint does not match the expected fingerprint",
+            ));
+        }
+        println!("Matched the expected target SSH host-key fingerprint.");
+        return Ok(());
+    }
+    if !io::stdin().is_terminal() {
+        return Err(RelayError::State(
+            "SSH host-key confirmation requires --expected-host-key-sha256 in non-interactive mode",
+        ));
+    }
+    eprint!("Are you sure you want to continue connecting (yes/no)? ");
+    io::stderr().flush().map_err(|_| RelayError::Input)?;
+    let mut response = String::new();
+    io::stdin()
+        .read_line(&mut response)
+        .map_err(|_| RelayError::Input)?;
+    if !is_exact_yes(&response) {
+        return Err(RelayError::State("SSH host key was not accepted"));
+    }
+    println!("Accepted the target SSH host key for strict verification.");
+    Ok(())
+}
+
+fn is_exact_yes(response: &str) -> bool {
+    matches!(response, "yes" | "yes\n" | "yes\r\n")
+}
+
 async fn enrollment_stream(
     socket: &mut RelaySocket,
     state: &mut RelayState,
     state_path: &Path,
+    expected_host_key_sha256: Option<&str>,
 ) -> RelayResult<()> {
-    let mut target: Option<OwnedWriteHalf> = None;
+    let mut target: Option<(u32, OwnedWriteHalf)> = None;
+    let mut next_stream_id = 1_u32;
+    let mut host_key_confirmed = false;
     let (outbound_tx, mut outbound_rx) = mpsc::channel(16);
     loop {
         tokio::select! {
             biased;
-            incoming = receive_frame(socket, Duration::from_secs(25)) => match incoming? {
-                ServerFrame::OpenStream { stream_id: 1 } if target.is_none() => {
+            incoming = receive_frame(socket, Duration::from_secs(45)) => match incoming? {
+                ServerFrame::OpenStream { stream_id }
+                    if target.is_none() && stream_id == next_stream_id && stream_id <= 2 =>
+                {
                     let stream = timeout(Duration::from_secs(5), TcpStream::connect("127.0.0.1:22"))
                         .await.map_err(|_| RelayError::Transport)?.map_err(|_| RelayError::Transport)?;
                     let (reader, writer) = stream.into_split();
-                    target = Some(writer);
-                    spawn_target_reader(1, reader, outbound_tx.clone());
-                    send_frame(socket, &ClientFrame::StreamOpened { stream_id: 1 }).await?;
+                    target = Some((stream_id, writer));
+                    next_stream_id = next_stream_id.checked_add(1).ok_or(RelayError::Protocol)?;
+                    spawn_target_reader(stream_id, reader, outbound_tx.clone());
+                    send_frame(socket, &ClientFrame::StreamOpened { stream_id }).await?;
                 }
-                ServerFrame::StreamData { stream_id: 1, data } => {
-                    let writer = target.as_mut().ok_or(RelayError::Protocol)?;
+                ServerFrame::StreamData { stream_id, data } => {
+                    let (active_stream_id, writer) = target.as_mut().ok_or(RelayError::Protocol)?;
+                    if *active_stream_id != stream_id {
+                        return Err(RelayError::Protocol);
+                    }
                     write_data(writer, &data).await?;
                 }
-                ServerFrame::StreamHalfClosed { stream_id: 1 } | ServerFrame::StreamClosed { stream_id: 1, .. } => {
-                    if let Some(mut writer) = target.take() { let _ = writer.shutdown().await; }
+                ServerFrame::StreamHalfClosed { stream_id } => {
+                    let (active_stream_id, writer) = target.as_mut().ok_or(RelayError::Protocol)?;
+                    if *active_stream_id != stream_id {
+                        return Err(RelayError::Protocol);
+                    }
+                    let _ = writer.shutdown().await;
                 }
-                ServerFrame::Activated { route_revision } => {
+                ServerFrame::StreamClosed { stream_id, .. } => {
+                    let (active_stream_id, mut writer) = target.take().ok_or(RelayError::Protocol)?;
+                    if active_stream_id != stream_id {
+                        return Err(RelayError::Protocol);
+                    }
+                    let _ = writer.shutdown().await;
+                    send_frame(
+                        socket,
+                        &ClientFrame::StreamClosed {
+                            stream_id,
+                            reason: CloseReason::Eof,
+                        },
+                    )
+                    .await?;
+                }
+                ServerFrame::HostKey { host_identity, fingerprint_sha256 }
+                    if target.is_none() && next_stream_id == 2 && !host_key_confirmed =>
+                {
+                    confirm_host_key(
+                        &host_identity,
+                        &fingerprint_sha256,
+                        expected_host_key_sha256,
+                    )?;
+                    send_frame(socket, &ClientFrame::HostKeyAccepted { host_identity }).await?;
+                    host_key_confirmed = true;
+                }
+                ServerFrame::Activated { route_revision } if target.is_none() => {
                     state.route_revision = Some(route_revision);
                     state.persist(state_path).map_err(RelayError::StateFile)?;
+                    if host_key_confirmed {
+                        println!("Permanently pinned '127.0.0.1:22' (ED25519) to the OwlMux Host.");
+                    }
                     info!(%route_revision, "Relay enrollment activated");
                     let _ = timeout(IO_TIMEOUT, socket.close(None)).await;
                     return Ok(());
@@ -372,7 +484,20 @@ async fn enrollment_stream(
                 ServerFrame::Error { code, .. } => return Err(RelayError::Remote(code)),
                 _ => return Err(RelayError::Protocol),
             },
-            Some(frame) = outbound_rx.recv() => send_frame(socket, &frame).await?,
+            Some(frame) = outbound_rx.recv() => {
+                let stream_id = match &frame {
+                    ClientFrame::StreamData { stream_id, .. }
+                    | ClientFrame::StreamHalfClosed { stream_id }
+                    | ClientFrame::StreamClosed { stream_id, .. } => *stream_id,
+                    _ => return Err(RelayError::Protocol),
+                };
+                if target
+                    .as_ref()
+                    .is_some_and(|(active_stream_id, _)| *active_stream_id == stream_id)
+                {
+                    send_frame(socket, &frame).await?;
+                }
+            }
         }
     }
 }
@@ -698,16 +823,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_key_confirmation_binds_the_key_to_its_fingerprint() {
+        let private_key = ssh_key::PrivateKey::random(&mut rand_core::OsRng, Algorithm::Ed25519)
+            .expect("generate host fixture");
+        let public_key = private_key
+            .public_key()
+            .to_openssh()
+            .expect("encode host fixture");
+        let fingerprint = private_key
+            .public_key()
+            .fingerprint(HashAlg::Sha256)
+            .to_string();
+
+        assert!(confirm_host_key(&public_key, &fingerprint, Some(&fingerprint)).is_ok());
+        assert!(matches!(
+            confirm_host_key(&public_key, "SHA256:wrong", Some(&fingerprint)),
+            Err(RelayError::Protocol)
+        ));
+        assert!(matches!(
+            confirm_host_key(
+                &format!("{public_key} untrusted-comment"),
+                &fingerprint,
+                Some(&fingerprint),
+            ),
+            Err(RelayError::Protocol)
+        ));
+    }
+
+    #[test]
+    fn host_key_confirmation_requires_exact_yes() {
+        for accepted in ["yes", "yes\n", "yes\r\n"] {
+            assert!(is_exact_yes(accepted));
+        }
+        for rejected in [" yes\n", "yes \n", "YES\n", "y\n", "yes\t\n", "yes\r"] {
+            assert!(!is_exact_yes(rejected));
+        }
+    }
+
+    #[test]
     fn command_options_reject_silent_no_ops() {
-        assert!(validate_command_options(Command::Run, Some("ws://server"), None, false).is_ok());
-        assert!(validate_command_options(Command::Reset, None, None, false).is_ok());
-        assert!(validate_command_options(Command::Run, Some("ws://server"), None, true).is_err());
         assert!(
-            validate_command_options(Command::Run, Some("ws://server"), Some("user"), false)
+            validate_command_options(Command::Run, Some("ws://server"), None, false, None).is_ok()
+        );
+        assert!(validate_command_options(Command::Reset, None, None, false, None).is_ok());
+        assert!(
+            validate_command_options(Command::Run, Some("ws://server"), None, true, None).is_err()
+        );
+        assert!(
+            validate_command_options(Command::Run, Some("ws://server"), Some("user"), false, None,)
                 .is_err()
         );
         assert!(
-            validate_command_options(Command::Reset, Some("ws://server"), None, false).is_err()
+            validate_command_options(Command::Reset, Some("ws://server"), None, false, None)
+                .is_err()
+        );
+        assert!(
+            validate_command_options(
+                Command::Run,
+                Some("ws://server"),
+                None,
+                false,
+                Some("SHA256:test"),
+            )
+            .is_err()
         );
     }
 }

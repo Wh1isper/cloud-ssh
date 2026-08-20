@@ -9,14 +9,14 @@
   "$defs": {
     "clientFrame": {
       "oneOf": [
-        { "$ref": "#/$defs/token" }, { "$ref": "#/$defs/setup" }, { "$ref": "#/$defs/ready" }, { "$ref": "#/$defs/signature" },
+        { "$ref": "#/$defs/token" }, { "$ref": "#/$defs/setup" }, { "$ref": "#/$defs/ready" }, { "$ref": "#/$defs/hostKeyAccepted" }, { "$ref": "#/$defs/signature" },
         { "$ref": "#/$defs/tunnelHello" }, { "$ref": "#/$defs/streamOpened" }, { "$ref": "#/$defs/streamData" },
         { "$ref": "#/$defs/streamHalfClosed" }, { "$ref": "#/$defs/streamClosed" }, { "$ref": "#/$defs/pong" }
       ]
     },
     "serverFrame": {
       "oneOf": [
-        { "$ref": "#/$defs/accepted" }, { "$ref": "#/$defs/credential" }, { "$ref": "#/$defs/challenge" }, { "$ref": "#/$defs/activated" }, { "$ref": "#/$defs/tunnelEstablished" },
+        { "$ref": "#/$defs/accepted" }, { "$ref": "#/$defs/credential" }, { "$ref": "#/$defs/hostKey" }, { "$ref": "#/$defs/challenge" }, { "$ref": "#/$defs/activated" }, { "$ref": "#/$defs/tunnelEstablished" },
         { "$ref": "#/$defs/openStream" }, { "$ref": "#/$defs/streamData" }, { "$ref": "#/$defs/streamHalfClosed" },
         { "$ref": "#/$defs/streamClosed" }, { "$ref": "#/$defs/ping" }, { "$ref": "#/$defs/error" }
       ]
@@ -24,10 +24,12 @@
     "token": { "type": "object", "additionalProperties": false, "required": ["type", "token"], "properties": { "type": { "const": "token" }, "token": { "type": "string", "minLength": 60, "maxLength": 80 } } },
     "setup": { "type": "object", "additionalProperties": false, "required": ["type", "protocol", "relay_id", "public_key", "endpoint", "observed_account"], "properties": { "type": { "const": "setup" }, "protocol": { "const": 1 }, "relay_id": { "type": "string", "format": "uuid" }, "public_key": { "type": "string", "minLength": 43, "maxLength": 43 }, "endpoint": { "const": "127.0.0.1:22" }, "observed_account": { "type": "string", "minLength": 1, "maxLength": 64 } } },
     "ready": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ready" } } },
+    "hostKeyAccepted": { "type": "object", "additionalProperties": false, "required": ["type", "host_identity"], "properties": { "type": { "const": "host_key_accepted" }, "host_identity": { "type": "string", "minLength": 32, "maxLength": 2048, "pattern": "^ssh-ed25519 " } } },
     "signature": { "type": "object", "additionalProperties": false, "required": ["type", "signature"], "properties": { "type": { "const": "signature" }, "signature": { "type": "string", "minLength": 86, "maxLength": 86 } } },
     "tunnelHello": { "type": "object", "additionalProperties": false, "required": ["type", "protocol", "deployment_id", "machine_id", "relay_id", "connection_id", "route_revision"], "properties": { "type": { "const": "tunnel_hello" }, "protocol": { "const": 1 }, "deployment_id": { "type": "string", "format": "uuid" }, "machine_id": { "type": "string", "format": "uuid" }, "relay_id": { "type": "string", "format": "uuid" }, "connection_id": { "type": "string", "format": "uuid" }, "route_revision": { "type": "integer", "minimum": 1 } } },
     "accepted": { "type": "object", "additionalProperties": false, "required": ["type", "deployment_id", "machine_id", "attempt_id", "route_revision"], "properties": { "type": { "const": "accepted" }, "deployment_id": { "type": "string", "format": "uuid" }, "machine_id": { "type": "string", "format": "uuid" }, "attempt_id": { "type": "string", "format": "uuid" }, "route_revision": { "type": "integer", "minimum": 1 } } },
     "credential": { "type": "object", "additionalProperties": false, "required": ["type", "credential_id", "name", "public_key", "public_fingerprint_sha256"], "properties": { "type": { "const": "credential" }, "credential_id": { "type": "string", "format": "uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 64 }, "public_key": { "type": "string", "minLength": 32, "maxLength": 1024 }, "public_fingerprint_sha256": { "type": "string", "minLength": 16, "maxLength": 128 } } },
+    "hostKey": { "type": "object", "additionalProperties": false, "required": ["type", "host_identity", "fingerprint_sha256"], "properties": { "type": { "const": "host_key" }, "host_identity": { "type": "string", "minLength": 32, "maxLength": 2048, "pattern": "^ssh-ed25519 " }, "fingerprint_sha256": { "type": "string", "minLength": 16, "maxLength": 128 } } },
     "challenge": { "type": "object", "additionalProperties": false, "required": ["type", "purpose", "nonce"], "properties": { "type": { "const": "challenge" }, "purpose": { "enum": ["enrollment", "tunnel"] }, "nonce": { "type": "string", "minLength": 43, "maxLength": 43 } } },
     "activated": { "type": "object", "additionalProperties": false, "required": ["type", "route_revision"], "properties": { "type": { "const": "activated" }, "route_revision": { "type": "integer", "minimum": 1 } } },
     "tunnelEstablished": { "type": "object", "additionalProperties": false, "required": ["type", "connection_epoch"], "properties": { "type": { "const": "tunnel_established" }, "connection_epoch": { "type": "integer", "minimum": 1 } } },

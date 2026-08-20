@@ -126,8 +126,8 @@ credentials=$(curl --fail --silent --show-error --max-time 5 \
 public_key=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["public_key"])' <<<"$credentials")
 printf '%s\n' "$public_key" | "${COMPOSE[@]}" exec -T target sh -c \
   'cat > /home/owlmux/.ssh/authorized_keys && chown owlmux:owlmux /home/owlmux/.ssh/authorized_keys && chmod 0600 /home/owlmux/.ssh/authorized_keys'
-host_identity=$("${COMPOSE[@]}" exec -T target cat /etc/ssh/ssh_host_ed25519_key.pub | tr -d '\r\n')
-machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"cluster-target","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux","host_identity":sys.argv[1]}))' "$host_identity")
+host_fingerprint=$("${COMPOSE[@]}" exec -T target ssh-keygen -E sha256 -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}' | tr -d '\r\n')
+machine_body='{"alias":"cluster-target","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux"}'
 created=$(curl --fail --silent --show-error --max-time 5 \
   -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
   --data "$machine_body" http://127.0.0.1:18080/api/v1/machines)
@@ -138,7 +138,8 @@ docker cp target/debug/owlmux-relay "$target_container:/usr/local/bin/owlmux-rel
 "${COMPOSE[@]}" exec -T target chmod 0700 /var/lib/owlmux
 printf '%s\n' "$enrollment_token" | "${COMPOSE[@]}" exec -T target \
   /usr/local/bin/owlmux-relay enroll --server ws://host.docker.internal:18080 \
-  --state /var/lib/owlmux/state.json --account owlmux --confirm-ready
+  --state /var/lib/owlmux/state.json --account owlmux --confirm-ready \
+  --expected-host-key-sha256 "$host_fingerprint"
 "${COMPOSE[@]}" exec -T target sh -c \
   'echo $$ > /tmp/owlmux-cluster-relay.pid; exec /usr/local/bin/owlmux-relay run --server ws://host.docker.internal:18080 --state /var/lib/owlmux/state.json' \
   >"$TMP/relay.log" 2>&1 &

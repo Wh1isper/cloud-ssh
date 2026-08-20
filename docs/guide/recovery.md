@@ -106,7 +106,7 @@ OwlMux never edits `authorized_keys` or kills target processes during this respo
 - **Server node or cluster-key compromise:** treat the whole Deployment as exposed. Isolate all nodes, rotate API/cluster configuration cold, assess every stored SSH credential, replace target public keys where necessary, and start fresh incarnations.
 - **Deployment API-key compromise:** gate access, cold-rotate the sole key and configuration epoch, inspect safe audit, and assess all Machine operations available to the holder.
 - **Relay compromise:** revoke the Machine Relay, reset/re-enroll the fixed Machine only after the target is trusted, and inspect target authorization. Relay cannot manage tmux or authorization stores by design.
-- **Target compromise:** disable the Machine, repair or replace the target under target-administrator control, rotate target authorization, and re-enroll only after host identity and account scope are trustworthy. Expected-host verification does not make an expected compromised target safe.
+- **Target compromise:** disable the Machine, repair the target under target-administrator control, and rotate target authorization. Strict pin verification does not make a compromised pinned target safe. If repair changes the SSH host key, create a new Machine rather than re-enrolling the old pin.
 
 ## Post-incident checks
 

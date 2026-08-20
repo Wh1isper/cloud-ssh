@@ -38,10 +38,6 @@ body,
   margin: 0;
 }
 
-body {
-  min-width: 320px;
-}
-
 button,
 input,
 select,
@@ -95,6 +91,7 @@ h1,
 h2,
 h3 {
   color: var(--ink);
+  overflow-wrap: anywhere;
   letter-spacing: -0.025em;
 }
 
@@ -350,10 +347,10 @@ textarea {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 34px;
+  gap: clamp(20px, 2.4vw, 40px);
   border-bottom: 1px solid var(--border);
   background: rgb(255 255 255 / 96%);
-  padding: 0 26px;
+  padding: 0 clamp(18px, 3vw, 56px);
 }
 
 .brand {
@@ -475,7 +472,11 @@ textarea {
   border-bottom: 1px solid var(--terminal-border);
   background: #0b1119;
   padding: 6px 12px 0;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .workspace-tab {
@@ -555,14 +556,14 @@ button.workspace-tab {
 }
 
 .page-shell {
-  width: min(100%, 1280px);
+  width: 100%;
   flex: 1;
-  margin: 0 auto;
-  padding: 42px 34px 70px;
+  padding: clamp(32px, 3vw, 52px) clamp(20px, 3.5vw, 64px) clamp(56px, 5vw, 84px);
 }
 
 .narrow-page {
-  width: min(100%, 920px);
+  max-width: 1120px;
+  margin-inline: auto;
 }
 
 .page-heading {
@@ -571,6 +572,13 @@ button.workspace-tab {
   justify-content: space-between;
   gap: 28px;
   margin-bottom: 30px;
+}
+
+.page-heading > div,
+.host-detail-heading > div,
+.host-card > header > div,
+.credential-card > header > div {
+  min-width: 0;
 }
 
 .page-heading h1,
@@ -610,12 +618,8 @@ button.workspace-tab {
 .search-field {
   position: relative;
   display: block;
-  max-width: 680px;
+  width: 100%;
   margin-bottom: 30px;
-}
-
-.search-field.narrow {
-  max-width: 420px;
 }
 
 .search-field input {
@@ -638,7 +642,7 @@ button.workspace-tab {
 
 .host-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
   gap: 18px;
 }
 
@@ -826,8 +830,13 @@ button.workspace-tab {
 }
 
 .host-table-name {
+  min-width: 0;
   display: grid;
   gap: 5px;
+}
+
+.host-table-name strong {
+  overflow-wrap: anywhere;
 }
 
 .host-table-name code,
@@ -848,6 +857,10 @@ button.workspace-tab {
   border-radius: 12px;
   background: #fff;
   padding: 24px;
+}
+
+.page-shell > .settings-card + .settings-card {
+  margin-top: 18px;
 }
 
 .settings-card > header,
@@ -1115,8 +1128,13 @@ button.workspace-tab {
 }
 
 .audit-row div {
+  min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+.audit-row strong {
+  overflow-wrap: anywhere;
 }
 
 .audit-row span,
@@ -1192,8 +1210,14 @@ button.workspace-tab {
   gap: 10px;
 }
 
+.workspace-identity {
+  min-width: 0;
+}
+
 .workspace-identity strong {
+  min-width: 0;
   color: #f3f6f8;
+  overflow-wrap: anywhere;
   font-size: 14px;
 }
 
@@ -1334,12 +1358,14 @@ button.workspace-tab {
 }
 
 .session-row > div {
+  min-width: 0;
   display: grid;
   gap: 5px;
 }
 
 .session-row strong {
   color: #f0f4f7;
+  overflow-wrap: anywhere;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 15px;
 }
@@ -1556,6 +1582,7 @@ button.workspace-tab {
 .dialog-form > p {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
   line-height: 1.6;
 }
 
@@ -1578,14 +1605,8 @@ button.workspace-tab {
 
 @media (max-width: 860px) {
   .app-header {
-    gap: 12px;
-    padding: 0 14px;
-  }
-
-  .brand > span:last-child,
-  .deployment-link,
-  .header-meta .button {
-    display: none;
+    gap: 14px;
+    padding-inline: 18px;
   }
 
   .primary-navigation {
@@ -1601,27 +1622,12 @@ button.workspace-tab {
   }
 
   .page-shell {
-    padding: 30px 18px 55px;
+    padding: 30px 20px 55px;
   }
 
-  .page-heading,
-  .host-detail-heading,
-  .action-block {
-    flex-direction: column;
-  }
-
-  .host-table-row {
-    grid-template-columns: 1fr auto;
-  }
-
-  .host-table-row > span:not(.status-pill) {
-    grid-column: 1 / -1;
-  }
-
-  .form-grid.two-columns,
-  .detail-grid,
   .credential-rebind {
     grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .new-session-form {
@@ -1646,8 +1652,7 @@ button.workspace-tab {
     flex-wrap: wrap;
   }
 
-  .control-state,
-  .workspace-actions .button-ghost {
+  .control-state {
     display: none;
   }
 
@@ -1656,9 +1661,133 @@ button.workspace-tab {
   }
 }
 
+@media (max-width: 700px) {
+  .page-heading,
+  .host-detail-heading,
+  .action-block {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .host-table-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .host-table-row > span:not(.status-pill),
+  .host-table-row > .row-actions {
+    grid-column: 1 / -1;
+  }
+
+  .host-table-row > .row-actions {
+    justify-content: end;
+  }
+
+  .form-grid.two-columns,
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 660px) {
+  .app-header,
+  .is-terminal .app-header {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 8px 12px 0;
+  }
+
+  .brand {
+    align-self: center;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .primary-navigation {
+    min-height: 44px;
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .navigation-item {
+    min-height: 44px;
+    flex: 1 0 auto;
+    padding-inline: 8px;
+  }
+
+  .header-meta {
+    min-width: 0;
+    min-height: 44px;
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: stretch;
+    justify-content: end;
+    gap: 6px;
+    margin-left: 0;
+  }
+
+  .deployment-link,
+  .header-meta .button {
+    min-height: 44px;
+  }
+
+  .deployment-link {
+    padding-inline: 8px;
+    font-size: 11px;
+  }
+
+  .header-meta .button {
+    padding-inline: 10px;
+  }
+}
+
 @media (max-width: 560px) {
+  .login-shell {
+    padding: 20px 14px;
+  }
+
   .login-card {
     padding: 28px 23px;
+  }
+
+  .page-shell {
+    padding: 26px 16px 48px;
+  }
+
+  .section-navigation {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .section-navigation a {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  .workspace-tabs {
+    padding-inline: 0;
+  }
+
+  .workspace-tab:not(button) {
+    max-width: calc(100vw - 95px);
+  }
+
+  .workspace-command-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .workspace-actions {
+    width: 100%;
+  }
+
+  .workspace-actions .button {
+    min-width: 0;
+    flex: 1 1 0;
   }
 
   .page-heading > .button,
@@ -1670,6 +1799,38 @@ button.workspace-tab {
     justify-content: center;
   }
 
+  .host-detail-heading > .row-actions .button,
+  .host-card > footer .button,
+  .host-table-row .row-actions .button {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .search-field input {
+    padding-right: 12px;
+  }
+
+  .search-field kbd {
+    display: none;
+  }
+
+  .host-card-grid,
+  .host-table-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .host-card,
+  .settings-card,
+  .credential-card {
+    padding: 19px;
+  }
+
+  .host-card > header,
+  .credential-card > header {
+    align-items: start;
+    flex-direction: column;
+  }
+
   .page-memory-card,
   .inline-create-form,
   .chooser-diagnostics {
@@ -1677,12 +1838,47 @@ button.workspace-tab {
     flex-direction: column;
   }
 
-  .host-table-row {
-    grid-template-columns: 1fr;
+  .inline-create-form label {
+    min-width: 0;
+  }
+
+  .inline-create-form .button {
+    width: 100%;
   }
 
   .host-table-row .row-actions {
-    justify-content: start;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .advanced-settings,
+  .advanced-settings[open] {
+    padding: 0;
+  }
+
+  .advanced-settings summary {
+    padding: 18px 19px;
+  }
+
+  .advanced-settings[open] {
+    padding: 0 19px 19px;
+  }
+
+  .advanced-settings[open] summary {
+    margin: 0 -19px 18px;
+  }
+
+  .audit-row {
+    grid-template-columns: 8px minmax(0, 1fr);
+  }
+
+  .audit-row time {
+    grid-column: 2;
+  }
+
+  .global-error {
+    flex-wrap: wrap;
+    padding-inline: 16px;
   }
 
   .form-actions,
@@ -1693,6 +1889,14 @@ button.workspace-tab {
   .form-actions .button,
   .dialog-actions .button {
     width: 100%;
+  }
+
+  .dialog-backdrop {
+    padding: 12px;
+  }
+
+  .dialog {
+    padding: 20px;
   }
 
   .session-chooser {

@@ -62,7 +62,7 @@ The public access contract is closed to direct Bearer verification and first-fra
 
 ### 2.1 Relay surfaces
 
-Relay WebSockets do not accept Deployment Bearer credentials, Browser API-key frames, cluster credentials, cookies, CSRF tokens, Browser Origin semantics, or credential fallback. Enrollment accepts only a dedicated token-only `enroll.token` first bounded frame, never URL/query/subprotocol; after successful bounded digest resolution and candidate clearing, that same accepting connection retains bounded setup/challenge state in memory and accepts one bounded `enroll.setup` frame as specified by [03](03-relay-enrollment-and-transport.md#4-enrollment-issuance). Tunnel ingress accepts only the signed transcript and active binding from [03](03-relay-enrollment-and-transport.md#7-tunnel-authentication-and-ingress-local-owner-claim). Raw token/signature candidate material is cleared at public ingress and never becomes internal cluster authority; enrollment and Relay tunnels never cross an internal Server hop.
+Relay WebSockets do not accept Deployment Bearer credentials, Browser API-key frames, cluster credentials, cookies, CSRF tokens, Browser Origin semantics, or credential fallback. Enrollment accepts only a dedicated token-only `enroll.token` first bounded frame, never URL/query/subprotocol; after successful bounded digest resolution and candidate clearing, that same accepting connection retains bounded setup/challenge state in memory and accepts one bounded `enroll.setup` frame as specified by [03](03-relay-enrollment-and-transport.md#4-enrollment-issuance). For a Machine with no pinned host key, the same connection additionally carries the Server-discovered `enroll.host_key` public key/fingerprint and Relay's exact `enroll.host_key_accepted` echo between the dedicated preflight stream and strict proof stream. These fields never appear in Machine creation input and cannot replace an existing pin. Tunnel ingress accepts only the signed transcript and active binding from [03](03-relay-enrollment-and-transport.md#7-tunnel-authentication-and-ingress-local-owner-claim). Raw token/signature candidate material is cleared at public ingress and never becomes internal cluster authority; enrollment and Relay tunnels never cross an internal Server hop.
 
 ## 3. HTTP API-key transport
 
@@ -108,6 +108,14 @@ SshCredentialSummary {
 ```
 
 ```text
+CreateMachineInput {
+    alias,
+    ssh_credential_id?,
+    target_account,
+    tmux_path,
+    tmux_socket_identity,
+}
+
 MachineSummary {
     machine_id,
     ssh_credential_id,
@@ -123,11 +131,11 @@ MachineDetail {
     target_account,
     tmux_path,
     tmux_socket_identity,
-    host_identity,
+    host_identity?,
 }
 ```
 
-The authenticated detail presentation returns the fixed public target identity and tmux scope needed to review one saved Host. These values are immutable after creation; a target account, expected host public key, tmux path, or socket-identity change requires a new Machine. Private keys, envelopes, encryption context/key operations, identity-file paths, complete SSH config, unverified host-key diagnostics, Relay/internal network endpoints, node leases/config proofs, internal challenge/HMAC transcripts, stream IDs, token digests, and unsafe target diagnostics are never ordinary presentation fields. Reachability is advisory and exposes no node identity or address.
+Machine creation accepts no SSH host key. Before first activation, authenticated detail omits `host_identity` and presents that the first Relay enrollment will discover and ask the Relay operator to confirm the target Ed25519 key. The first successful activation returns the durable pinned key; target account, pinned host public key, tmux path, and socket identity are immutable afterward, and changing any of them requires a new Machine. Private keys, envelopes, encryption context/key operations, identity-file paths, complete SSH config, unconfirmed host-key diagnostics, Relay/internal network endpoints, node leases/config proofs, internal challenge/HMAC transcripts, stream IDs, token digests, and unsafe target diagnostics are never ordinary presentation fields. Reachability is advisory and exposes no node identity or address.
 
 ### 5.1 Credential mutations
 
@@ -296,11 +304,11 @@ flowchart LR
 - lists every Deployment Machine as a saved Host;
 - separates `/hosts`, `/hosts/new`, and `/hosts/{id}` list, creation, and detail journeys;
 - distinguishes durable lifecycle from advisory owner/Relay reachability without exposing node identity or endpoints;
-- creates one fixed target identity, edits alias, enrolls, disables, re-enrolls, and rebinds credential;
-- presents target account, expected host public key, tmux path, and socket identity as immutable detail fields;
+- creates one fixed target account/tmux scope without asking for a host key, edits alias, enrolls, disables, re-enrolls, and rebinds credential;
+- before first activation, explains that Relay enrollment will discover and confirm the SSH host key; afterward, presents the pinned host public key with target account, tmux path, and socket identity as immutable detail fields;
 - presents active re-enrollment as an access-closing transition to tokenless `Pending`, followed by explicit one-use token issuance for the same fixed target scope;
 - shows a one-use enrollment token only at issuance;
-- shows exact target public-key installation guidance and the durable enrollment outcome, never connection-local readiness or proof progress.
+- shows exact target credential public-key installation guidance and the durable enrollment outcome, never connection-local authorization readiness, host-key confirmation, or proof progress.
 
 ### 10.3 SSH credentials
 

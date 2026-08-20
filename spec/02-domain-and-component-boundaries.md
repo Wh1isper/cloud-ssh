@@ -173,7 +173,7 @@ Target sshd owns host identity, authorized-key evaluation, Unix-account selectio
 | Relay ingress/Machine owner   | Accepting Relay incarnation, actual owner incarnation, monotonically increasing connection epoch                                                         | Only the accepting incarnation may claim itself; PostgreSQL claim and valid node lease are authority; at most one actual owner    |
 | Internal owner hop            | Cluster-authenticated Browser/API context and one bounded WSS connection                                                                                 | No Relay/enrollment forwarding, raw external credential, durable buffering/replay, or second hop; exact owner epoch required      |
 | SSH credential registry       | Generated Ed25519 Deployment credentials, default selection, public metadata, fixed encrypted envelopes, lifecycle                                       | Immutable key material, exactly one default, referenced credentials remain active                                                 |
-| Machine registry              | Machines, expected host, selected credential, lifecycle                                                                                                  | Fixed host/account/socket scope and exactly one active credential binding                                                         |
+| Machine registry              | Machines, absent-or-first-enrollment-pinned host, selected credential, lifecycle                                                                         | Fixed pinned-host/account/socket scope after activation and exactly one active credential binding                                 |
 | Enrollment and Relay identity | One-use enrollment, Relay public binding, activation evidence                                                                                            | One token binds one pending Machine; a Relay ID/key appears in at most one active Machine binding and never replaces SSH identity |
 | Live attachment               | Relay streams, SSH/tmux clients, projection, current Browser writer attachment, ordered dispatch                                                         | Owner-process-local and bounded; owner loss discards it without target cleanup                                                    |
 
@@ -302,7 +302,7 @@ sequenceDiagram
     Owner->>DB: Confirm own lease/owner epoch and read Machine/credential snapshot
     Owner->>Route: Open exact Machine route under connection epoch
     Route-->>Owner: Ordered byte stream
-    Owner->>SSH: Start constrained client with expected host and key
+    Owner->>SSH: Start constrained client with pinned host and selected credential
     SSH-->>Owner: Verified SSH channel
     Owner->>Tmux: Probe compatibility and sessions without creation
     Tmux-->>Owner: Bounded discovery, possibly empty
@@ -360,3 +360,4 @@ Delivery adapters own HTTP status, WebSocket close code, request ID, and redacti
 - No domain aggregate represents target sessions, panes, PTYs, output, or processes.
 - Owner/node restart discards all affected process-local state and leaves target work untouched.
 - Separate OwlMux Deployments share no database, membership, owner registry, secrets, or live authority.
+  oyments share no database, membership, owner registry, secrets, or live authority.

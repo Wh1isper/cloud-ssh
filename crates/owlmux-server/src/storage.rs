@@ -493,6 +493,62 @@ mod container_tests {
         assert_eq!(critical_probe, 1);
     }
 
+    async fn assert_first_enrollment_host_pin(
+        database: &Database,
+        deployment_id: Uuid,
+        credential_id: Uuid,
+    ) -> Uuid {
+        let machine_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO machines (id, deployment_id, ssh_credential_id, alias, lifecycle, target_account, tmux_path, tmux_socket_identity) VALUES ($1,$2,$3,'release-history','pending','owlmux','/usr/bin/tmux','owlmux')")
+            .bind(machine_id)
+            .bind(deployment_id)
+            .bind(credential_id)
+            .execute(database.ordinary())
+            .await
+            .expect("machine without host identity");
+        let host_identity: Option<String> =
+            sqlx::query_scalar("SELECT host_identity FROM machines WHERE id = $1")
+                .bind(machine_id)
+                .fetch_one(database.ordinary())
+                .await
+                .expect("pending host identity");
+        assert_eq!(host_identity, None);
+        assert!(
+            sqlx::query("UPDATE machines SET lifecycle = 'active' WHERE id = $1")
+                .bind(machine_id)
+                .execute(database.ordinary())
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE machines SET lifecycle = 'verifying' WHERE id = $1")
+            .bind(machine_id)
+            .execute(database.ordinary())
+            .await
+            .expect("begin verification");
+        sqlx::query("UPDATE machines SET host_identity = $1 WHERE id = $2")
+            .bind("ssh-ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+            .bind(machine_id)
+            .execute(database.ordinary())
+            .await
+            .expect("pin host identity once");
+        assert!(
+            sqlx::query("UPDATE machines SET host_identity = $1 WHERE id = $2")
+                .bind("ssh-ed25519 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+                .bind(machine_id)
+                .execute(database.ordinary())
+                .await
+                .is_err()
+        );
+        assert!(
+            sqlx::query("UPDATE machines SET host_identity = NULL WHERE id = $1")
+                .bind(machine_id)
+                .execute(database.ordinary())
+                .await
+                .is_err()
+        );
+        machine_id
+    }
+
     #[tokio::test]
     async fn container_postgres_bootstrap_is_idempotent_and_lease_is_fenced() {
         let Some(postgres) = postgres().await else {
@@ -530,17 +586,10 @@ mod container_tests {
                 .fetch_one(database.ordinary())
                 .await
                 .expect("default credential");
-        let machine_id = Uuid::new_v4();
+        let machine_id =
+            assert_first_enrollment_host_pin(&database, deployment_id, credential_id).await;
         let enrollment_id = Uuid::new_v4();
         let attempt_id = Uuid::new_v4();
-        sqlx::query("INSERT INTO machines (id, deployment_id, ssh_credential_id, alias, lifecycle, target_account, tmux_path, tmux_socket_identity, host_identity) VALUES ($1,$2,$3,'release-history','pending','owlmux','/usr/bin/tmux','owlmux',$4)")
-            .bind(machine_id)
-            .bind(deployment_id)
-            .bind(credential_id)
-            .bind("ssh-ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-            .execute(database.ordinary())
-            .await
-            .expect("machine");
         sqlx::query("INSERT INTO relay_enrollments (id, machine_id, token_digest, token_expires_at, consumed_at, status) VALUES ($1,$2,$3,clock_timestamp(),clock_timestamp(),'consumed')")
             .bind(enrollment_id)
             .bind(machine_id)

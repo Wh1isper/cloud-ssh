@@ -23,7 +23,7 @@ make dev-target-up
 make dev-target-status
 ```
 
-The target fixture does not install an OwlMux public key automatically. The target administrator boundary remains explicit: copy a generated public key into `/home/owlmux/.ssh/authorized_keys`, create a Machine with the fixture's Ed25519 host public key, and run the Relay inside the target network namespace.
+The target fixture does not install an OwlMux public key automatically. The target administrator boundary remains explicit: copy a generated credential public key into `/home/owlmux/.ssh/authorized_keys`, create a Machine without supplying a host key, and run the Relay inside the target network namespace. First enrollment discovers the fixture's Ed25519 host key, requires exact interactive confirmation or an exact expected SHA-256 fingerprint in automation, proves account access on a separate strict stream, and pins the confirmed key only on activation.
 
 The repeatable acceptance target performs that setup in an isolated Compose project, runs versioned attachment protocol clients, and removes its volumes afterward. The opt-in matrix repeats the target compatibility path across the minimum, maintained distribution packages, `bash`/`dash`, and a checksum-pinned current upstream release:
 

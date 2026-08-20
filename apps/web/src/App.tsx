@@ -283,7 +283,6 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
 
   async function createHost(input: {
     alias: string;
-    host_identity: string;
     ssh_credential_id?: string;
     target_account: string;
     tmux_path: string;
@@ -865,7 +864,7 @@ function HostsPage({
           Add Host
         </button>
       </header>
-      <label className="search-field narrow">
+      <label className="search-field">
         <span className="visually-hidden">Search Hosts</span>
         <input
           onChange={(event) => setQuery(event.currentTarget.value)}
@@ -930,7 +929,6 @@ function HostCreatePage({
   navigate: (path: string) => void;
   onCreate: (input: {
     alias: string;
-    host_identity: string;
     ssh_credential_id?: string;
     target_account: string;
     tmux_path: string;
@@ -944,7 +942,6 @@ function HostCreatePage({
     const credentialId = String(data.get("ssh_credential_id") ?? "");
     await onCreate({
       alias: String(data.get("alias") ?? ""),
-      host_identity: String(data.get("host_identity") ?? ""),
       ...(credentialId.length === 0 ? {} : { ssh_credential_id: credentialId }),
       target_account: String(data.get("target_account") ?? ""),
       tmux_path: String(data.get("tmux_path") ?? "/usr/bin/tmux"),
@@ -960,7 +957,7 @@ function HostCreatePage({
         <div>
           <p className="section-kicker">Host setup</p>
           <h1>Add a saved Host</h1>
-          <p>Create one immutable target identity and issue its first one-use Relay token.</p>
+          <p>Create one target scope and issue its first one-use Relay token.</p>
         </div>
       </header>
       <form className="host-setup-form" onSubmit={submit}>
@@ -969,8 +966,8 @@ function HostCreatePage({
             <header>
               <span className="step-number">1</span>
               <div>
-                <h2>Target identity</h2>
-                <p>These fields fix the SSH account and verified target host boundary.</p>
+                <h2>Target scope</h2>
+                <p>Fix the SSH account now; first enrollment will verify the target host.</p>
               </div>
             </header>
             <div className="form-grid two-columns">
@@ -983,19 +980,11 @@ function HostCreatePage({
                 <input maxLength={64} name="target_account" placeholder="deploy" required />
               </label>
             </div>
-            <label>
-              Expected SSH host public key
-              <textarea
-                name="host_identity"
-                placeholder="ssh-ed25519 AAAA…"
-                required
-                rows={4}
-                spellCheck={false}
-              />
-              <span className="field-help">
-                OwlMux always verifies this exact identity. A host-key change requires a new Host.
-              </span>
-            </label>
+            <p className="callout neutral">
+              On first Relay enrollment, OwlMux discovers the target's Ed25519 SSH host key and
+              shows its SHA-256 fingerprint in the Relay CLI. Confirm it like a normal first SSH
+              connection; OwlMux then pins that exact key for every later connection.
+            </p>
           </section>
 
           <section className="settings-card">
@@ -1011,13 +1000,12 @@ function HostCreatePage({
             <label>
               Credential
               <select defaultValue="" name="ssh_credential_id">
-                <option value="">Deployment default</option>
+                <option value="">Default</option>
                 {credentials
-                  .filter((credential) => credential.status === "active")
+                  .filter((credential) => credential.status === "active" && !credential.is_default)
                   .map((credential) => (
                     <option key={credential.ssh_credential_id} value={credential.ssh_credential_id}>
                       {credential.name}
-                      {credential.is_default ? " · default" : ""}
                     </option>
                   ))}
               </select>
@@ -1208,11 +1196,22 @@ function HostDetailPage({
               value={credential?.public_fingerprint_sha256 ?? "Unavailable"}
               code
             />
+            <Detail
+              label="SSH host key trust"
+              value={detail.host_identity === undefined ? "Pending first enrollment" : "Pinned"}
+            />
           </dl>
-          <label>
-            Expected target SSH host public key
-            <textarea readOnly rows={4} spellCheck={false} value={detail.host_identity} />
-          </label>
+          {detail.host_identity === undefined ? (
+            <p className="callout neutral">
+              The Relay CLI will show the discovered Ed25519 host-key fingerprint for confirmation
+              before OwlMux authenticates and pins it.
+            </p>
+          ) : (
+            <label>
+              Pinned target SSH host public key
+              <textarea readOnly rows={4} spellCheck={false} value={detail.host_identity} />
+            </label>
+          )}
           <MachineCredentialControl
             credentials={credentials}
             key={`${detail.machine_id}:${detail.ssh_credential_id}`}
@@ -1233,8 +1232,8 @@ function HostDetailPage({
             <Detail label="Socket identity" value={detail.tmux_socket_identity} code />
           </dl>
           <p className="callout neutral">
-            Changing the SSH host identity, target account, tmux path, or socket scope requires a
-            new Host registration.
+            After first enrollment, changing the pinned SSH host identity, target account, tmux
+            path, or socket scope requires a new Host registration.
           </p>
         </section>
 

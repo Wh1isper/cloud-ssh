@@ -54,9 +54,9 @@ make dev-target-up
 make dev-target-status
 ```
 
-The fixture intentionally starts with no authorized OwlMux key. Use Credentials to copy the selected generated public key and install it into the target's `authorized_keys` as the target administrator. Then use **Hosts → Add Host** to create the underlying Machine with the target Ed25519 host public key and copy the one-use enrollment token.
+The fixture intentionally starts with no authorized OwlMux key. Use Credentials to copy the selected generated public key and install it into the target's `authorized_keys` as the target administrator. Then use **Hosts → Add Host** to create the underlying Machine and copy the one-use enrollment token. Add Host does not ask for an SSH host key: the first Relay enrollment discovers the target Ed25519 key and asks for confirmation before OwlMux pins it.
 
-Relay reads the token from a no-echo prompt or bounded stdin and stores its identity in a mode-`0600` state file. After the target administrator installs the displayed Server-generated public key, enroll once and explicitly confirm that authorization is ready:
+Relay reads the token from a no-echo prompt or bounded stdin and stores its identity in a mode-`0600` state file. After the target administrator installs the displayed Server-generated credential public key, enroll once, confirm that authorization is ready, inspect the discovered target host-key fingerprint, and enter exact `yes` at the standard SSH-style authenticity prompt:
 
 ```bash
 owlmux-relay enroll \
@@ -73,7 +73,7 @@ owlmux-relay run \
   --state /var/lib/owlmux/state.json
 ```
 
-`owlmux-relay start` combines those steps for first use and runs directly from already active state. Use `--confirm-ready` only in automation that has independently installed the displayed key; the flag skips only the local human acknowledgment and does not mutate target authorization. The independent Server-side SSH proof still runs and must succeed. Active re-enrollment requires the protected Server-side re-enrollment action first, followed by `owlmux-relay reset`, explicit new-token issuance, `enroll`, and `run`.
+`owlmux-relay start` combines those steps for first use and runs directly from already active state. Use `--confirm-ready` only in automation that has independently installed the displayed credential key; the flag skips only the target-authorization acknowledgment and does not mutate target authorization. For an automated first enrollment, also pass `--expected-host-key-sha256 SHA256:...`; Relay proceeds only on an exact match and has no unconditional host-key acceptance flag. Server then opens a separate strict SSH proof stream, and activation atomically pins the confirmed key only when that proof succeeds. Active re-enrollment retains the pin and requires the protected Server-side re-enrollment action first, followed by `owlmux-relay reset`, explicit new-token issuance, `enroll`, and `run`; it does not rediscover or accept a replacement host key.
 
 For production use `wss://`, a protected persistent state directory, and a target-local Relay process. The Relay endpoint is fixed to `127.0.0.1:22`; Browser input cannot choose SSH destinations, options, identities, commands, or tmux syntax.
 

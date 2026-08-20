@@ -26,7 +26,6 @@ export type ErrorCode =
   | "invalid_target_account"
   | "invalid_tmux_path"
   | "invalid_tmux_socket"
-  | "invalid_host_identity"
   | "not_found"
   | "credential_in_use"
   | "credential_limit"
@@ -79,7 +78,6 @@ export interface CreateCredentialInput {
 
 export interface CreateMachineInput {
   alias: string;
-  host_identity: string;
   ssh_credential_id?: string;
   target_account: string;
   tmux_path: string;
@@ -125,7 +123,7 @@ export interface MachineCredentialInput {
 
 export interface MachineDetail {
   alias: string;
-  host_identity: string;
+  host_identity?: string;
   lifecycle: "pending" | "verifying" | "active" | "disabled";
   machine_id: string;
   reachability:

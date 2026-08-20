@@ -107,13 +107,14 @@ credentials=$(curl --fail --silent --show-error --max-time 5 \
 public_key=$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["public_key"])' <<<"$credentials")
 printf '%s\n' "$public_key" | "${COMPOSE[@]}" exec -T target sh -c \
   'cat > /home/owlmux/.ssh/authorized_keys && chown owlmux:owlmux /home/owlmux/.ssh/authorized_keys && chmod 0600 /home/owlmux/.ssh/authorized_keys'
-host_identity=$("${COMPOSE[@]}" exec -T target cat /etc/ssh/ssh_host_ed25519_key.pub | tr -d '\r\n')
+host_identity=$("${COMPOSE[@]}" exec -T target awk '{print $1 " " $2}' /etc/ssh/ssh_host_ed25519_key.pub | tr -d '\r\n')
+host_fingerprint=$("${COMPOSE[@]}" exec -T target ssh-keygen -E sha256 -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}' | tr -d '\r\n')
 
 race_credential=$(curl --fail --silent --show-error --max-time 5 \
   -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
   --data '{"name":"Retirement race"}' http://127.0.0.1:18080/api/v1/ssh-credentials)
 race_credential_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ssh_credential_id"])' <<<"$race_credential")
-race_machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"credential-race","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux","host_identity":sys.argv[1],"ssh_credential_id":sys.argv[2]}))' "$host_identity" "$race_credential_id")
+race_machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"credential-race","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux","ssh_credential_id":sys.argv[1]}))' "$race_credential_id")
 curl --silent --show-error --max-time 10 -o "$TMP/race-create.body" -w '%{http_code}' \
   -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
   --data "$race_machine_body" http://127.0.0.1:18080/api/v1/machines >"$TMP/race-create.status" &
@@ -139,7 +140,7 @@ race_machines=$(curl --fail --silent --show-error --max-time 5 \
 python3 -c 'import json,sys; credentials=json.loads(sys.stdin.read()); credential_id,status=sys.argv[1:]; credential=next(item for item in credentials if item["ssh_credential_id"] == credential_id); assert (status == "201" and credential["status"] == "active" and credential["bound_machine_count"] == 1) or (status != "201" and credential["status"] == "retired" and credential["bound_machine_count"] == 0)' "$race_credential_id" "$race_create_status" <<<"$race_credentials"
 python3 -c 'import json,sys; machines=json.loads(sys.stdin.read()); credential_id,status=sys.argv[1:]; bound=[machine for machine in machines if machine["ssh_credential_id"] == credential_id]; assert (status == "201" and len(bound) == 1) or (status != "201" and len(bound) == 0)' "$race_credential_id" "$race_create_status" <<<"$race_machines"
 
-machine_body=$(python3 -c 'import json,sys; print(json.dumps({"alias":"e2e-target","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux","host_identity":sys.argv[1]}))' "$host_identity")
+machine_body='{"alias":"e2e-target","target_account":"owlmux","tmux_path":"/usr/bin/tmux","tmux_socket_identity":"owlmux"}'
 created=$(curl --fail --silent --show-error --max-time 5 \
   -X POST -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
   --data "$machine_body" http://127.0.0.1:18080/api/v1/machines)
@@ -170,7 +171,8 @@ printf '%s\n' "$enrollment_token" | "${COMPOSE[@]}" exec -T target \
   --server ws://host.docker.internal:18080 \
   --state /var/lib/owlmux/state.json \
   --account owlmux \
-  --confirm-ready
+  --confirm-ready \
+  --expected-host-key-sha256 "$host_fingerprint"
 
 "${COMPOSE[@]}" exec -T target sh -c \
   'echo $$ > /tmp/owlmux-relay.pid; exec /usr/local/bin/owlmux-relay run --server ws://host.docker.internal:18080 --state /var/lib/owlmux/state.json' \

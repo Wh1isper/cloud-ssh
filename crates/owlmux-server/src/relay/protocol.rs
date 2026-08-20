@@ -20,6 +20,9 @@ pub enum ClientFrame {
         observed_account: String,
     },
     Ready,
+    HostKeyAccepted {
+        host_identity: String,
+    },
     Signature {
         signature: String,
     },
@@ -64,6 +67,10 @@ pub enum ServerFrame {
         name: String,
         public_key: String,
         public_fingerprint_sha256: String,
+    },
+    HostKey {
+        host_identity: String,
+        fingerprint_sha256: String,
     },
     Challenge {
         purpose: ChallengePurpose,
@@ -152,6 +159,27 @@ mod tests {
             serde_json::from_str::<ClientFrame>(setup).expect("setup fixture"),
             ClientFrame::Setup { protocol: 1, .. }
         ));
+        let host_key_accepted = include_str!("../../fixtures/relay/host-key-accepted.json");
+        assert!(matches!(
+            serde_json::from_str::<ClientFrame>(host_key_accepted)
+                .expect("host-key acceptance fixture"),
+            ClientFrame::HostKeyAccepted { .. }
+        ));
+        let host_key: serde_json::Value =
+            serde_json::from_str(include_str!("../../fixtures/relay/host-key.json"))
+                .expect("host-key fixture");
+        let encoded = serde_json::to_value(ServerFrame::HostKey {
+            host_identity: host_key["host_identity"]
+                .as_str()
+                .expect("host identity")
+                .to_owned(),
+            fingerprint_sha256: host_key["fingerprint_sha256"]
+                .as_str()
+                .expect("host fingerprint")
+                .to_owned(),
+        })
+        .expect("serialize host-key frame");
+        assert_eq!(encoded, host_key);
         let unknown = include_str!("../../fixtures/relay/unknown-field.json");
         assert!(serde_json::from_str::<ClientFrame>(unknown).is_err());
         assert_eq!(crate::generated::contracts::RELAY_PROTOCOL_VERSION, VERSION);

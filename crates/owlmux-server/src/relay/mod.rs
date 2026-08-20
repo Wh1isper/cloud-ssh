@@ -27,9 +27,9 @@ use sqlx::Row as _;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf},
     sync::{Mutex, OwnedSemaphorePermit, RwLock, mpsc, oneshot},
-    time::{Instant, interval, sleep_until, timeout},
+    time::{Instant, interval, sleep_until, timeout, timeout_at},
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -46,9 +46,11 @@ use protocol::{
 };
 
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+const ENROLLMENT_CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const OWNER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
-const ENROLLMENT_ATTEMPT_SECONDS: i64 = 60;
+const ENROLLMENT_ATTEMPT_SECONDS: i64 = 120;
+const ENROLLMENT_ACTIVATION_RESERVE: Duration = Duration::from_secs(5);
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const ENROLLMENT_PREFIX: &str = "owlmux_enroll_v1_";
 
@@ -571,6 +573,7 @@ struct AcceptedEnrollment {
     attempt_id: Uuid,
     route_revision: i64,
     target_account: String,
+    host_identity: Option<String>,
 }
 
 async fn enrollment(
@@ -585,10 +588,18 @@ async fn enrollment(
         return send_error(&mut socket, RelayError::Protocol).await;
     };
     let token = Zeroizing::new(token);
+    let attempt_started = Instant::now();
     let accepted = accept_token(&state, &token).await?;
     drop(source_permit);
     drop(attempt_permit);
-    let result = continue_enrollment(socket, &state, &accepted).await;
+    let local_deadline = attempt_started + Duration::from_secs(ENROLLMENT_ATTEMPT_SECONDS as u64)
+        - ENROLLMENT_ACTIVATION_RESERVE;
+    let result = timeout_at(
+        local_deadline,
+        continue_enrollment(socket, &state, &accepted),
+    )
+    .await
+    .unwrap_or(Err(RelayError::InvalidState));
     if result.is_err() {
         fail_attempt(&state, &accepted).await;
     }
@@ -631,7 +642,7 @@ async fn continue_enrollment(
     let credential = enrollment_credential(state, accepted).await?;
     send_frame(&mut socket, &credential).await?;
     if !matches!(
-        receive_frame(&mut socket, FIRST_FRAME_TIMEOUT).await?,
+        receive_frame(&mut socket, ENROLLMENT_CONFIRM_TIMEOUT).await?,
         ClientFrame::Ready
     ) {
         return send_error(&mut socket, RelayError::Protocol).await;
@@ -664,18 +675,16 @@ async fn continue_enrollment(
         ),
     )?;
 
-    send_frame(&mut socket, &ServerFrame::OpenStream { stream_id: 1 }).await?;
-    if !matches!(
-        receive_frame(&mut socket, FIRST_FRAME_TIMEOUT).await?,
-        ClientFrame::StreamOpened { stream_id: 1 }
-    ) {
-        return send_error(&mut socket, RelayError::ProofFailed).await;
-    }
-    let (ssh_stream, transport_stream) = tokio::io::duplex(64 * 1024);
+    let (host_identity, proof_stream_id) =
+        resolve_enrollment_host_identity(&mut socket, state, accepted).await?;
+
+    let (ssh_stream, transport_stream) =
+        open_provisional_stream(&mut socket, proof_stream_id).await?;
     let proof = run_provisional_stream(
         &mut socket,
+        proof_stream_id,
         transport_stream,
-        ssh::verify_access(state, accepted.machine_id, ssh_stream),
+        ssh::verify_access(state, accepted.machine_id, &host_identity, ssh_stream),
     )
     .await;
     let _ = timeout(
@@ -692,7 +701,7 @@ async fn continue_enrollment(
     )
     .await;
     proof?;
-    activate(state, accepted, relay_id, public_key).await?;
+    activate(state, accepted, relay_id, public_key, &host_identity).await?;
     send_frame(
         &mut socket,
         &ServerFrame::Activated {
@@ -702,6 +711,60 @@ async fn continue_enrollment(
     .await?;
     finish_enrollment(&mut socket).await;
     Ok(())
+}
+
+async fn resolve_enrollment_host_identity(
+    socket: &mut WebSocket,
+    state: &Arc<ServerState>,
+    accepted: &AcceptedEnrollment,
+) -> RelayResult<(String, u32)> {
+    if let Some(host_identity) = &accepted.host_identity {
+        if !ssh::is_ed25519_host_identity(host_identity) {
+            return Err(RelayError::InvalidState);
+        }
+        return Ok((host_identity.clone(), 1));
+    }
+
+    let (ssh_stream, transport_stream) = open_provisional_stream(socket, 1).await?;
+    let discovery = run_provisional_stream(
+        socket,
+        1,
+        transport_stream,
+        ssh::discover_host_identity(state, ssh_stream),
+    )
+    .await;
+    let _ = timeout(
+        Duration::from_secs(1),
+        record_audit(
+            state.database.ordinary(),
+            state.database.deployment_id(),
+            "machine",
+            Some(accepted.machine_id),
+            None,
+            "ssh_discover_host_key",
+            if discovery.is_ok() {
+                "success"
+            } else {
+                "rejected"
+            },
+        ),
+    )
+    .await;
+    let discovered = discovery?;
+    send_frame(
+        socket,
+        &ServerFrame::HostKey {
+            host_identity: discovered.public_key.clone(),
+            fingerprint_sha256: discovered.fingerprint_sha256,
+        },
+    )
+    .await?;
+    match receive_frame(socket, ENROLLMENT_CONFIRM_TIMEOUT).await? {
+        ClientFrame::HostKeyAccepted { host_identity }
+            if host_identity == discovered.public_key => {}
+        _ => return send_error(socket, RelayError::InvalidState).await,
+    }
+    Ok((discovered.public_key, 2))
 }
 
 async fn enrollment_credential(
@@ -743,27 +806,42 @@ async fn finish_enrollment(socket: &mut WebSocket) {
     let _ = timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 
-async fn run_provisional_stream<F>(
+async fn open_provisional_stream(
     socket: &mut WebSocket,
+    stream_id: u32,
+) -> RelayResult<(DuplexStream, DuplexStream)> {
+    send_frame(socket, &ServerFrame::OpenStream { stream_id }).await?;
+    if !matches!(
+        receive_frame(socket, FIRST_FRAME_TIMEOUT).await?,
+        ClientFrame::StreamOpened { stream_id: opened } if opened == stream_id
+    ) {
+        return Err(RelayError::ProofFailed);
+    }
+    Ok(tokio::io::duplex(64 * 1024))
+}
+
+async fn run_provisional_stream<F, T>(
+    socket: &mut WebSocket,
+    stream_id: u32,
     transport: DuplexStream,
-    proof: F,
-) -> RelayResult<()>
+    operation: F,
+) -> RelayResult<T>
 where
-    F: std::future::Future<Output = Result<(), ssh::SshError>>,
+    F: std::future::Future<Output = Result<T, ssh::SshError>>,
 {
     let (mut reader, mut writer) = tokio::io::split(transport);
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<ServerFrame>(16);
-    let reader_task = tokio::spawn(async move {
-        relay_reader(1, &mut reader, outbound_tx).await;
-    });
-    tokio::pin!(proof);
+    let reader_task = AbortOnDropHandle::new(tokio::spawn(async move {
+        relay_reader(stream_id, &mut reader, outbound_tx).await;
+    }));
+    tokio::pin!(operation);
     let result = loop {
         tokio::select! {
-            proof_result = &mut proof => break proof_result.map_err(|_| RelayError::ProofFailed),
+            operation_result = &mut operation => break operation_result.map_err(|_| RelayError::ProofFailed),
             Some(frame) = outbound_rx.recv() => send_frame(socket, &frame).await?,
             frame = receive_frame(socket, Duration::from_secs(20)) => match frame? {
-                ClientFrame::StreamData { stream_id: 1, data } => write_data(&mut writer, &data).await?,
-                ClientFrame::StreamHalfClosed { stream_id: 1 } | ClientFrame::StreamClosed { stream_id: 1, .. } => {
+                ClientFrame::StreamData { stream_id: received, data } if received == stream_id => write_data(&mut writer, &data).await?,
+                ClientFrame::StreamHalfClosed { stream_id: received } | ClientFrame::StreamClosed { stream_id: received, .. } if received == stream_id => {
                     writer.shutdown().await.map_err(|_| RelayError::Unavailable)?;
                 }
                 _ => break Err(RelayError::Protocol),
@@ -771,6 +849,34 @@ where
         }
     };
     reader_task.abort();
+    send_frame(
+        socket,
+        &ServerFrame::StreamClosed {
+            stream_id,
+            reason: CloseReason::Eof,
+        },
+    )
+    .await?;
+    timeout(FIRST_FRAME_TIMEOUT, async {
+        loop {
+            match receive_frame(socket, FIRST_FRAME_TIMEOUT).await? {
+                ClientFrame::StreamClosed {
+                    stream_id: received,
+                    ..
+                } if received == stream_id => return Ok(()),
+                ClientFrame::StreamData {
+                    stream_id: received,
+                    ..
+                }
+                | ClientFrame::StreamHalfClosed {
+                    stream_id: received,
+                } if received == stream_id => {}
+                _ => return Err(RelayError::Protocol),
+            }
+        }
+    })
+    .await
+    .map_err(|_| RelayError::Protocol)??;
     result
 }
 
@@ -1074,7 +1180,7 @@ async fn accept_token(state: &Arc<ServerState>, token: &str) -> RelayResult<Acce
         .map_err(|_| RelayError::Unavailable)?;
     lock_deployment(&mut transaction, state).await?;
     let row = sqlx::query(
-        "SELECT e.id AS enrollment_id, m.id AS machine_id, m.route_revision, m.target_account FROM relay_enrollments e JOIN machines m ON m.id = e.machine_id WHERE e.token_digest = $1 AND e.status = 'issued' AND e.token_expires_at > clock_timestamp() AND m.lifecycle = 'pending' FOR UPDATE OF e, m",
+        "SELECT e.id AS enrollment_id, m.id AS machine_id, m.route_revision, m.target_account, m.host_identity FROM relay_enrollments e JOIN machines m ON m.id = e.machine_id WHERE e.token_digest = $1 AND e.status = 'issued' AND e.token_expires_at > clock_timestamp() AND m.lifecycle = 'pending' FOR UPDATE OF e, m",
     )
     .bind(digest.as_slice())
     .fetch_optional(&mut *transaction)
@@ -1093,6 +1199,9 @@ async fn accept_token(state: &Arc<ServerState>, token: &str) -> RelayResult<Acce
         .map_err(|_| RelayError::Unavailable)?;
     let target_account: String = row
         .try_get("target_account")
+        .map_err(|_| RelayError::Unavailable)?;
+    let host_identity: Option<String> = row
+        .try_get("host_identity")
         .map_err(|_| RelayError::Unavailable)?;
     let attempt_id = Uuid::new_v4();
     sqlx::query("UPDATE relay_enrollments SET status = 'consumed', consumed_at = clock_timestamp() WHERE id = $1")
@@ -1127,6 +1236,7 @@ async fn accept_token(state: &Arc<ServerState>, token: &str) -> RelayResult<Acce
         attempt_id,
         route_revision,
         target_account,
+        host_identity,
     })
 }
 
@@ -1135,6 +1245,7 @@ async fn activate(
     accepted: &AcceptedEnrollment,
     relay_id: Uuid,
     public_key: [u8; 32],
+    host_identity: &str,
 ) -> RelayResult<()> {
     let mut transaction = state
         .database
@@ -1149,8 +1260,31 @@ async fn activate(
     )
     .bind(accepted.attempt_id).bind(accepted.machine_id).bind(state.lease.incarnation_id())
     .fetch_one(&mut *transaction).await.map_err(|_| RelayError::Unavailable)?;
-    if !valid {
+    if !valid || !ssh::is_ed25519_host_identity(host_identity) {
         return Err(RelayError::InvalidState);
+    }
+    let host_changed = sqlx::query("UPDATE machines SET host_identity = COALESCE(host_identity, $1), updated_at = clock_timestamp() WHERE id = $2 AND lifecycle = 'verifying' AND route_revision = $3 AND (host_identity IS NULL OR host_identity = $1)")
+        .bind(host_identity)
+        .bind(accepted.machine_id)
+        .bind(accepted.route_revision)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| RelayError::Unavailable)?
+        .rows_affected();
+    if host_changed != 1 {
+        return Err(RelayError::InvalidState);
+    }
+    if accepted.host_identity.is_none() {
+        append_audit(
+            &mut transaction,
+            state.database.deployment_id(),
+            "machine",
+            Some(accepted.machine_id),
+            None,
+            "pin_ssh_host_key",
+        )
+        .await
+        .map_err(|_| RelayError::Unavailable)?;
     }
     sqlx::query("INSERT INTO relay_bindings (id, machine_id, relay_id, relay_public_key, route_revision, status) VALUES ($1,$2,$3,$4,$5,'active')")
         .bind(Uuid::new_v4()).bind(accepted.machine_id).bind(relay_id).bind(public_key.as_slice()).bind(accepted.route_revision)
@@ -1284,7 +1418,7 @@ async fn claim_owner(
     lock_deployment(&mut transaction, state).await?;
     validate_node(&mut transaction, state).await?;
     let row = sqlx::query(
-        "SELECT o.connection_epoch, o.owner_incarnation_id, m.lifecycle, EXISTS(SELECT 1 FROM server_nodes n WHERE n.incarnation_id = o.owner_incarnation_id AND n.state IN ('serving', 'draining') AND n.lease_until > clock_timestamp()) AS owner_valid FROM machine_owners o JOIN machines m ON m.id = o.machine_id JOIN relay_bindings b ON b.machine_id = m.id WHERE o.machine_id = $1 AND o.route_revision = $2 AND m.lifecycle IN ('verifying', 'active') AND m.route_revision = $2 AND b.status = 'active' AND b.route_revision = $2 FOR UPDATE OF o, m, b",
+        "SELECT o.connection_epoch, o.owner_incarnation_id, m.lifecycle, EXISTS(SELECT 1 FROM server_nodes n WHERE n.incarnation_id = o.owner_incarnation_id AND n.state IN ('serving', 'draining') AND n.lease_until > clock_timestamp()) AS owner_valid FROM machine_owners o JOIN machines m ON m.id = o.machine_id JOIN relay_bindings b ON b.machine_id = m.id WHERE o.machine_id = $1 AND o.route_revision = $2 AND m.lifecycle IN ('verifying', 'active') AND m.host_identity IS NOT NULL AND m.route_revision = $2 AND b.status = 'active' AND b.route_revision = $2 FOR UPDATE OF o, m, b",
     )
     .bind(machine_id).bind(route_revision).fetch_optional(&mut *transaction).await.map_err(|_| RelayError::Unavailable)?.ok_or(RelayError::InvalidState)?;
     let owner_valid: bool = row
@@ -1479,7 +1613,7 @@ async fn send_frame(socket: &mut WebSocket, frame: &ServerFrame) -> RelayResult<
         .map_err(|_| RelayError::Unavailable)
 }
 
-async fn send_error(socket: &mut WebSocket, error: RelayError) -> RelayResult<()> {
+async fn send_error<T>(socket: &mut WebSocket, error: RelayError) -> RelayResult<T> {
     let _ = send_frame(
         socket,
         &ServerFrame::Error {

@@ -24,13 +24,12 @@
       "additionalProperties": false,
       "properties": {
         "alias": { "maxLength": 64, "minLength": 1, "type": "string" },
-        "host_identity": { "maxLength": 2048, "minLength": 32, "pattern": "^ssh-ed25519 ", "type": "string" },
         "ssh_credential_id": { "format": "uuid", "type": "string" },
         "target_account": { "maxLength": 64, "minLength": 1, "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,63}$", "type": "string" },
         "tmux_path": { "maxLength": 256, "minLength": 1, "type": "string" },
         "tmux_socket_identity": { "maxLength": 128, "minLength": 1, "type": "string" }
       },
-      "required": ["alias", "host_identity", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+      "required": ["alias", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
     },
     "CredentialSummary": {
       "additionalProperties": false,
@@ -110,7 +109,7 @@
         "tmux_path": { "maxLength": 256, "minLength": 1, "type": "string" },
         "tmux_socket_identity": { "maxLength": 128, "minLength": 1, "type": "string" }
       },
-      "required": ["alias", "host_identity", "lifecycle", "machine_id", "reachability", "ssh_credential_id", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
+      "required": ["alias", "lifecycle", "machine_id", "reachability", "ssh_credential_id", "target_account", "tmux_path", "tmux_socket_identity"], "type": "object"
     },
     "MachineSummary": {
       "additionalProperties": false,

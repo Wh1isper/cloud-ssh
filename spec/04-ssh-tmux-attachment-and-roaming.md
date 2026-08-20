@@ -13,17 +13,19 @@ OwlMux does not scrape a normal terminal, emulate tmux, own a PTY, or maintain a
 The current Machine owner uses the system OpenSSH client as a supervised node-local subprocess. Every owner node MUST:
 
 - run it under a dedicated unprivileged service account;
-- use a Server-owned configuration and explicit `known_hosts` input;
-- ignore ambient user SSH configuration for target authentication;
-- select only the Machine-bound deployment credential with `IdentitiesOnly`;
-- disable the ambient SSH agent for target authentication;
-- disable password and host-key prompts, agent/X11 forwarding, TCP forwarding, PTY allocation, and interactive fallback;
+- use a Server-owned configuration and an exclusive explicit `known_hosts` input;
+- ignore ambient user SSH configuration for host discovery and target authentication;
+- select only the Machine-bound deployment credential with `IdentitiesOnly` after first-use host confirmation;
+- disable the ambient SSH agent for host discovery and target authentication;
+- disable password and interactive host-key prompts, agent/X11 forwarding, TCP forwarding, PTY allocation, and interactive fallback;
 - construct local arguments without a local shell and render the one remote command through the closed entry-operation boundary below;
 - clean the child environment and bound stdin, stdout, stderr, lifetime, and diagnostics;
 - materialize decrypted key material only through its node-local private runtime root/startup-instance/child-instance hierarchy, exclusive `0600` identity file, authenticated-protocol post-load unlink, child-isolated cleanup, and fail-closed own-root orphan-scavenging boundary in [06](06-storage-consistency-and-private-key-encryption.md#71-owner-local-openssh-identity-materialization);
 - terminate the local child without issuing target session-destruction commands.
 
-Before each new OpenSSH child, the owner reads the Machine's current credential ID/revision and pins that generated Ed25519 snapshot for the child's lifetime as defined by [06](06-storage-consistency-and-private-key-encryption.md#32-ssh-credentials). A later credential rebind affects only later children and does not invalidate the authenticated child or its Attachment. OwlMux accepts no caller-provided identity, private-key upload, alternate SSH key algorithm, bastion profile, or `ProxyJump` surface.
+Before each authenticated OpenSSH child, the owner reads the Machine's current credential ID/revision and pins that generated Ed25519 snapshot for the child's lifetime as defined by [06](06-storage-consistency-and-private-key-encryption.md#32-ssh-credentials). A later credential rebind affects only later children and does not invalidate the authenticated child or its Attachment. OwlMux accepts no caller-provided identity, private-key upload, alternate SSH key algorithm, bastion profile, or `ProxyJump` surface.
+
+A newly created Machine has no trusted host key. During only its first enrollment, Server opens a dedicated provisional stream and runs a host-key-only OpenSSH child with no identity file or user-authentication method, an empty exclusive `known_hosts`, `StrictHostKeyChecking=accept-new`, `HashKnownHosts=no`, `UpdateHostKeys=no`, the fixed `owlmux-target` alias, and `HostKeyAlgorithms=ssh-ed25519`. A deliberately invalid username ensures authentication cannot succeed. Server accepts only one bounded canonical `owlmux-target ssh-ed25519 ...` record written by OpenSSH, derives the SHA-256 fingerprint, and requires Relay-local exact interactive `yes` or an exact expected fingerprint for automation. The subsequent independent child uses `StrictHostKeyChecking=yes`, the confirmed key, and the Machine credential for `VerifySshAccess`. First activation atomically pins that key; every re-enrollment and ordinary child skips discovery and uses strict checking against the immutable pin. OwlMux never uses `ssh-keyscan`, a Relay-reported host key, a global/user `known_hosts`, or unconditional first-use acceptance.
 
 Browser input cannot choose SSH address, username, identity, configuration, option, environment, forwarding, command, or host-key policy.
 
@@ -31,7 +33,7 @@ OpenSSH sends ordinary remote execution as one command string that target sshd i
 
 Every entry uses `ssh -T` and `RequestTTY=no`. Probe, create, and attach use an operator-configured absolute tmux executable path validated by the probe and `tmux -C` rather than `-CC`; verification does not invoke tmux. Verify, probe, and create are bounded short-lived children; attach is a separate control child for one exact session. Control stdout must begin with the expected bounded protocol and stderr remains separate. Login-shell startup, account policy, banner, rc, or other output that pollutes stdout causes a safe compatibility failure. OwlMux does not install a target wrapper; a wrapper or SSH implementation change requires a later explicit architecture decision.
 
-The owner presents its accepted owner-local Relay ordered byte stream to OpenSSH through one bounded node-local bridge, such as a fixed `ProxyCommand` helper or equivalent socket adapter. The bridge accepts no caller-selected destination and is scoped to one Machine, connection epoch, and SSH child. The owner supplies an explicit host-key alias and `known_hosts` material so OpenSSH verifies the enrolled target identity rather than any Relay/internal bridge address.
+The owner presents its accepted owner-local Relay ordered byte stream to OpenSSH through one bounded node-local bridge, such as a fixed `ProxyCommand` helper or equivalent socket adapter. The bridge accepts no caller-selected destination and is scoped to one Machine, connection epoch, and SSH child. The owner supplies the fixed host-key alias and exclusive `known_hosts` material so OpenSSH verifies the first-enrollment-confirmed target identity rather than any Relay/internal bridge address.
 
 ## 3. Target compatibility boundary
 

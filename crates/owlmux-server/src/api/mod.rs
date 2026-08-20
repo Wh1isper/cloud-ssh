@@ -563,7 +563,8 @@ struct MachineDetail {
     target_account: String,
     tmux_path: String,
     tmux_socket_identity: String,
-    host_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_identity: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -573,7 +574,6 @@ struct CreateMachineInput {
     target_account: String,
     tmux_path: String,
     tmux_socket_identity: String,
-    host_identity: String,
     ssh_credential_id: Option<Uuid>,
 }
 
@@ -680,8 +680,8 @@ async fn create_machine(
     if active.is_none() {
         return Err(ApiError::not_found());
     }
-    sqlx::query("INSERT INTO machines (id, deployment_id, ssh_credential_id, alias, target_account, tmux_path, tmux_socket_identity, host_identity) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
-        .bind(machine_id).bind(state.database.deployment_id()).bind(credential_id).bind(&input.alias).bind(&input.target_account).bind(&input.tmux_path).bind(&input.tmux_socket_identity).bind(&input.host_identity)
+    sqlx::query("INSERT INTO machines (id, deployment_id, ssh_credential_id, alias, target_account, tmux_path, tmux_socket_identity) VALUES ($1,$2,$3,$4,$5,$6,$7)")
+        .bind(machine_id).bind(state.database.deployment_id()).bind(credential_id).bind(&input.alias).bind(&input.target_account).bind(&input.tmux_path).bind(&input.tmux_socket_identity)
         .execute(&mut *transaction).await.map_err(|error| map_write(&error))?;
     sqlx::query("INSERT INTO machine_owners (machine_id, route_revision) VALUES ($1, 1)")
         .bind(machine_id)
@@ -1586,12 +1586,6 @@ fn validate_machine(input: &CreateMachineInput) -> ApiResult<()> {
         return Err(ApiError::bad_request(
             "invalid_tmux_socket",
             "tmux socket identity is invalid.",
-        ));
-    }
-    if input.host_identity.len() > 2048 || !ssh::is_ed25519_host_identity(&input.host_identity) {
-        return Err(ApiError::bad_request(
-            "invalid_host_identity",
-            "Host identity is invalid.",
         ));
     }
     Ok(())

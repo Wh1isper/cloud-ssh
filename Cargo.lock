@@ -1730,7 +1730,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "owlmux-relay"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -1740,6 +1740,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "ssh-key",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
@@ -1750,7 +1751,7 @@ dependencies = [
 
 [[package]]
 name = "owlmux-server"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "axum",
  "base64",

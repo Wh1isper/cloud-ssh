@@ -32,7 +32,7 @@ OwlMux MUST provide:
 03. reconstruction after Browser, Server node, route, SSH, or control-client loss;
 04. a target-initiated Relay route for Machines without inbound reachability;
 05. Deployment-wide Machine and reusable generated Ed25519 SSH credential management;
-06. one configured protected SSH credential and expected host identity per Machine;
+06. one configured protected SSH credential and one first-enrollment-confirmed, durably pinned host identity per active Machine;
 07. one-or-more-node Server deployment without transferring or durably brokering terminal bytes;
 08. fenced ingress-as-owner Machine ownership with safe reconnect after node loss or drain;
 09. a small closed tmux action set plus bounded literal pane input;
@@ -121,7 +121,7 @@ An SSH connection is an attachment transport. An external or internal WebSocket 
 
 A Machine is one Deployment-owned registration for a fixed target access scope:
 
-- one expected target SSH host identity;
+- one target SSH host identity, absent at creation and first-enrollment-confirmed before activation;
 - one target Unix account;
 - one trusted tmux socket identity.
 
@@ -132,7 +132,7 @@ A Machine has explicitly replaceable bindings:
 - one active Deployment SSH credential;
 - one active Relay identity and fixed loopback sshd endpoint.
 
-Changing the target host/account/socket scope creates a new Machine. Replacing the Relay or credential binding retains Machine identity. A Relay ID or Ed25519 public key may appear in at most one active Machine binding. Browser input MUST NOT select or override any fixed scope or binding.
+First activation durably pins the confirmed Ed25519 host key. Changing that target host identity, account, or socket scope creates a new Machine. Replacing the Relay or credential binding retains Machine identity. A Relay ID or Ed25519 public key may appear in at most one active Machine binding. Browser input MUST NOT select or override any fixed scope or binding.
 
 ### 6.3 Server node and incarnation
 
@@ -284,7 +284,7 @@ flowchart TB
 
 Every Server node is a high-trust bastion. While owning an attachment or carrying one owner-WSS hop, nodes on that path can observe terminal input/output; an owner can decrypt the SSH credential selected by a Machine. At-rest encryption does not protect targets from a compromised running Server node. Cluster membership is therefore inside the same Deployment trust domain, not an isolation boundary between mutually hostile nodes.
 
-The target is authoritative, not inherently benign. A compromised expected target controls sshd, tmux, terminal bytes, and Relay. Host-key verification proves which target was reached; it does not prove that target is safe.
+The target is authoritative, not inherently benign. A compromised pinned target controls sshd, tmux, terminal bytes, and Relay. First-use confirmation and later strict host-key verification prove which target key was accepted and reached; they do not prove that target is safe.
 
 ## 9. Quality goals
 

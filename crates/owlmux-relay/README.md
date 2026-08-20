@@ -18,7 +18,7 @@ The matching portable binary archive is also attached to each OwlMux GitHub rele
 
 ## Enroll and run
 
-After the target administrator installs the Server-generated public key for the configured account, enroll once. The command prints the exact public-key metadata returned by Server and requires an explicit readiness confirmation before proof begins:
+After the target administrator installs the Server-generated credential public key for the configured account, enroll once. The command prints the exact credential metadata returned by Server and requires an explicit authorization-readiness confirmation. On a Machine's first enrollment, Server then discovers the Ed25519 host key through constrained OpenSSH; Relay canonicalizes the Ed25519 key, locally recomputes and checks its SHA-256 fingerprint, prints that derived value with the standard SSH-style authenticity prompt, and continues only when the operator enters exact `yes` with no surrounding whitespace:
 
 ```bash
 owlmux-relay enroll \
@@ -35,11 +35,11 @@ owlmux-relay run \
   --state /var/lib/owlmux/state.json
 ```
 
-`start` is a convenience command that enrolls when state is not active and then runs the tunnel. `--confirm-ready` is intended only for automation that has independently completed target authorization; it skips only the local human acknowledgment and does not install an authorization key. The independent Server-side SSH proof still runs and must succeed.
+`start` is a convenience command that enrolls when state is not active and then runs the tunnel. `--confirm-ready` is intended only for automation that has independently completed target authorization; it skips only the local credential-installation acknowledgment and does not install an authorization key. Automated first enrollment must also pass `--expected-host-key-sha256 SHA256:...`; Relay requires an exact fingerprint match and offers no unconditional acceptance flag. After host confirmation, an independent strict Server-side SSH proof runs. First activation atomically pins the confirmed host key only if that proof succeeds.
 
 ## Re-enroll
 
-Active re-enrollment is deliberately explicit. First request re-enrollment through the protected Server API, which fences the current owner and returns the Machine to tokenless `Pending`. Then reset the Relay candidate identity, issue a new one-use token, enroll, and run again:
+Active re-enrollment is deliberately explicit. First request re-enrollment through the protected Server API, which fences the current owner and returns the Machine to tokenless `Pending` while retaining its pinned host key. Then reset the Relay candidate identity, issue a new one-use token, enroll, and run again. Re-enrollment skips host discovery and fails closed unless strict SSH verification sees the same key:
 
 ```bash
 owlmux-relay reset --state /var/lib/owlmux/state.json

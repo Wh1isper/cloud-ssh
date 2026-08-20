@@ -10,7 +10,7 @@ use std::{
 
 use nix::fcntl::{Flock, FlockArg};
 use sqlx::Row as _;
-use ssh_key::{Algorithm, PublicKey};
+use ssh_key::{Algorithm, HashAlg, PublicKey};
 use tokio::{
     io::{
         AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader,
@@ -22,6 +22,7 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
+use tokio_util::task::AbortOnDropHandle;
 use uuid::Uuid;
 
 use crate::{crypto, deployment::NodeLease, service::ServerState};
@@ -217,7 +218,164 @@ fn validate_scoped_name(name: &str, prefix: &str) -> Result<(), SshError> {
     Ok(())
 }
 
-/// Verify the configured Deployment credential against the enrolled loopback target.
+fn spawn_abort_on_drop_bridge(
+    listener: TcpListener,
+    mut relay_stream: DuplexStream,
+) -> AbortOnDropHandle<io::Result<()>> {
+    AbortOnDropHandle::new(tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await?;
+        tokio::io::copy_bidirectional(&mut socket, &mut relay_stream).await?;
+        Ok(())
+    }))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostIdentity {
+    pub public_key: String,
+    pub fingerprint_sha256: String,
+}
+
+/// Discover and stage the Ed25519 key offered by loopback sshd without authenticating.
+///
+/// # Errors
+///
+/// Returns a bounded custody, transport, parse, or fencing error.
+pub async fn discover_host_identity(
+    state: &Arc<ServerState>,
+    relay_stream: DuplexStream,
+) -> Result<HostIdentity, SshError> {
+    state.lease.check().map_err(|_| SshError::Fenced)?;
+    let child_dir = state.ssh.child_dir()?;
+    let known_hosts_path = child_dir.path().join("known_hosts");
+    write_exclusive(&known_hosts_path, b"", 0o600).await?;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|_| SshError::Unavailable)?;
+    let port = listener
+        .local_addr()
+        .map_err(|_| SshError::Unavailable)?
+        .port();
+    let bridge = spawn_abort_on_drop_bridge(listener, relay_stream);
+
+    let mut child = command_for_host_discovery(&known_hosts_path, port)
+        .spawn()
+        .map_err(|_| SshError::Unavailable)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or(SshError::Unavailable)?
+        .take(MAX_DIAGNOSTIC_READ);
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or(SshError::Unavailable)?
+        .take(MAX_DIAGNOSTIC_READ);
+    let result = timeout(SSH_TIMEOUT, async {
+        let mut output = Vec::new();
+        let mut diagnostic = Vec::new();
+        let (stdout_result, stderr_result, status) = tokio::join!(
+            stdout.read_to_end(&mut output),
+            stderr.read_to_end(&mut diagnostic),
+            child.wait()
+        );
+        let status = status.map_err(|_| SshError::ProofFailed)?;
+        if stdout_result.is_err()
+            || stderr_result.is_err()
+            || !output.is_empty()
+            || diagnostic.len() > MAX_DIAGNOSTIC_BYTES
+            || status.success()
+        {
+            return Err(SshError::ProofFailed);
+        }
+        let mut known_hosts = tokio::fs::File::open(&known_hosts_path)
+            .await
+            .map_err(|_| SshError::Custody)?
+            .take(2049);
+        let mut bytes = Vec::new();
+        known_hosts
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| SshError::Custody)?;
+        if bytes.len() > 2048 {
+            return Err(SshError::ProofFailed);
+        }
+        parse_known_host(&bytes)
+    })
+    .await
+    .map_err(|_| SshError::ProofFailed)?;
+    bridge.abort();
+    state.lease.check().map_err(|_| SshError::Fenced)?;
+    result
+}
+
+fn command_for_host_discovery(known_hosts_path: &Path, port: u16) -> Command {
+    let mut command = Command::new("ssh");
+    command
+        .arg("-F")
+        .arg("/dev/null")
+        .arg("-T")
+        .arg("-oBatchMode=yes")
+        .arg("-oIdentitiesOnly=yes")
+        .arg("-oIdentityAgent=none")
+        .arg("-oPubkeyAuthentication=no")
+        .arg("-oPasswordAuthentication=no")
+        .arg("-oKbdInteractiveAuthentication=no")
+        .arg("-oPreferredAuthentications=none")
+        .arg("-oStrictHostKeyChecking=accept-new")
+        .arg(format!(
+            "-oUserKnownHostsFile={}",
+            known_hosts_path.display()
+        ))
+        .arg("-oGlobalKnownHostsFile=/dev/null")
+        .arg("-oHostKeyAlias=owlmux-target")
+        .arg("-oHashKnownHosts=no")
+        .arg("-oHostKeyAlgorithms=ssh-ed25519")
+        .arg("-oUpdateHostKeys=no")
+        .arg("-oRequestTTY=no")
+        .arg("-oClearAllForwardings=yes")
+        .arg("-oPermitLocalCommand=no")
+        .arg("-oConnectTimeout=10")
+        .arg("-p")
+        .arg(port.to_string())
+        .arg("--")
+        .arg("owlmux-host-key-preflight-invalid@127.0.0.1")
+        .arg("false")
+        .env_clear()
+        .env("LANG", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
+fn parse_known_host(value: &[u8]) -> Result<HostIdentity, SshError> {
+    let value = std::str::from_utf8(value).map_err(|_| SshError::ProofFailed)?;
+    let line = value.strip_suffix('\n').ok_or(SshError::ProofFailed)?;
+    if line.contains(['\r', '\n', '\0']) {
+        return Err(SshError::ProofFailed);
+    }
+    let mut fields = line.split_ascii_whitespace();
+    if fields.next() != Some("owlmux-target") {
+        return Err(SshError::ProofFailed);
+    }
+    let algorithm = fields.next().ok_or(SshError::ProofFailed)?;
+    let encoded_key = fields.next().ok_or(SshError::ProofFailed)?;
+    if fields.next().is_some() {
+        return Err(SshError::ProofFailed);
+    }
+    let public_key = PublicKey::from_openssh(&format!("{algorithm} {encoded_key}"))
+        .map_err(|_| SshError::ProofFailed)?;
+    if public_key.algorithm() != Algorithm::Ed25519 {
+        return Err(SshError::ProofFailed);
+    }
+    Ok(HostIdentity {
+        public_key: public_key.to_openssh().map_err(|_| SshError::ProofFailed)?,
+        fingerprint_sha256: public_key.fingerprint(HashAlg::Sha256).to_string(),
+    })
+}
+
+/// Verify the configured Deployment credential against one confirmed loopback target identity.
 ///
 /// # Errors
 ///
@@ -225,11 +383,15 @@ fn validate_scoped_name(name: &str, prefix: &str) -> Result<(), SshError> {
 pub async fn verify_access(
     state: &Arc<ServerState>,
     machine_id: Uuid,
-    relay_stream: tokio::io::DuplexStream,
+    host_identity: &str,
+    relay_stream: DuplexStream,
 ) -> Result<(), SshError> {
     state.lease.check().map_err(|_| SshError::Fenced)?;
+    if !is_ed25519_host_identity(host_identity) {
+        return Err(SshError::InvalidState);
+    }
     let row = sqlx::query(
-        "SELECT m.target_account, m.host_identity, m.ssh_credential_id, c.encrypted_private_envelope FROM machines m JOIN ssh_credentials c ON c.id = m.ssh_credential_id WHERE m.id = $1 AND m.lifecycle = 'verifying' AND c.status = 'active'",
+        "SELECT m.target_account, m.ssh_credential_id, c.encrypted_private_envelope FROM machines m JOIN ssh_credentials c ON c.id = m.ssh_credential_id WHERE m.id = $1 AND m.lifecycle = 'verifying' AND c.status = 'active'",
     )
     .bind(machine_id)
     .fetch_optional(state.database.ordinary())
@@ -240,10 +402,7 @@ pub async fn verify_access(
     let account: String = row
         .try_get("target_account")
         .map_err(|_| SshError::Unavailable)?;
-    let host_identity: String = row
-        .try_get("host_identity")
-        .map_err(|_| SshError::Unavailable)?;
-    if !is_target_account(&account) || !is_ed25519_host_identity(&host_identity) {
+    if !is_target_account(&account) {
         return Err(SshError::InvalidState);
     }
     let credential_id: Uuid = row
@@ -266,7 +425,7 @@ pub async fn verify_access(
         &state.lease,
         child_dir.path(),
         &account,
-        &host_identity,
+        host_identity,
         &private_key,
         relay_stream,
     )
@@ -295,12 +454,7 @@ async fn verify_with_child(
         .local_addr()
         .map_err(|_| SshError::Unavailable)?
         .port();
-    let bridge = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await?;
-        let mut relay_stream = relay_stream;
-        tokio::io::copy_bidirectional(&mut socket, &mut relay_stream).await?;
-        io::Result::Ok(())
-    });
+    let bridge = spawn_abort_on_drop_bridge(listener, relay_stream);
 
     lease.check().map_err(|_| SshError::Fenced)?;
     let mut child = Command::new("ssh")
@@ -311,6 +465,7 @@ async fn verify_with_child(
         .arg("-oIdentityAgent=none")
         .arg("-oPasswordAuthentication=no")
         .arg("-oKbdInteractiveAuthentication=no")
+        .arg("-oHostKeyAlgorithms=ssh-ed25519")
         .arg("-oStrictHostKeyChecking=yes")
         .arg(format!(
             "-oUserKnownHostsFile={}",
@@ -401,7 +556,7 @@ pub struct ControlChild {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     pending_line: Vec<u8>,
-    bridge: JoinHandle<io::Result<()>>,
+    bridge: AbortOnDropHandle<io::Result<()>>,
     stderr: JoinHandle<()>,
     identity_path: Option<PathBuf>,
     _child_dir: ChildDirectory,
@@ -802,7 +957,7 @@ async fn spawn_access(
     access: &ActiveAccess,
     remote_command: &str,
     relay_stream: DuplexStream,
-) -> Result<(Child, JoinHandle<io::Result<()>>, PathBuf), SshError> {
+) -> Result<(Child, AbortOnDropHandle<io::Result<()>>, PathBuf), SshError> {
     lease.check().map_err(|_| SshError::Fenced)?;
     let identity_path = child_dir.join("identity");
     let known_hosts_path = child_dir.join("known_hosts");
@@ -816,12 +971,7 @@ async fn spawn_access(
         .local_addr()
         .map_err(|_| SshError::Unavailable)?
         .port();
-    let bridge = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await?;
-        let mut relay_stream = relay_stream;
-        tokio::io::copy_bidirectional(&mut socket, &mut relay_stream).await?;
-        io::Result::Ok(())
-    });
+    let bridge = spawn_abort_on_drop_bridge(listener, relay_stream);
     if lease.check().is_err() {
         bridge.abort();
         return Err(SshError::Fenced);
@@ -856,6 +1006,7 @@ fn command_for_access(
         .arg("-oIdentityAgent=none")
         .arg("-oPasswordAuthentication=no")
         .arg("-oKbdInteractiveAuthentication=no")
+        .arg("-oHostKeyAlgorithms=ssh-ed25519")
         .arg("-oStrictHostKeyChecking=yes")
         .arg(format!(
             "-oUserKnownHostsFile={}",
@@ -1055,6 +1206,61 @@ mod tests {
             .position(|value| value == "owlmux@127.0.0.1")
             .expect("destination");
         assert!(terminator < destination);
+        assert!(
+            arguments
+                .iter()
+                .any(|value| value == "-oHostKeyAlgorithms=ssh-ed25519")
+        );
+        assert!(
+            arguments
+                .iter()
+                .any(|value| value == "-oStrictHostKeyChecking=yes")
+        );
+    }
+
+    #[test]
+    fn host_discovery_command_is_credential_free_and_accept_new_only() {
+        let command = command_for_host_discovery(Path::new("/tmp/known_hosts"), 2222);
+        let arguments = command
+            .as_std()
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for required in [
+            "-oPubkeyAuthentication=no",
+            "-oPreferredAuthentications=none",
+            "-oStrictHostKeyChecking=accept-new",
+            "-oHostKeyAlgorithms=ssh-ed25519",
+            "-oUpdateHostKeys=no",
+            "owlmux-host-key-preflight-invalid@127.0.0.1",
+        ] {
+            assert!(arguments.iter().any(|value| value == required));
+        }
+        assert!(!arguments.iter().any(|value| value == "-i"));
+    }
+
+    #[test]
+    fn known_host_parser_accepts_one_canonical_ed25519_key_only() {
+        let private_key = ssh_key::PrivateKey::random(&mut rand_core::OsRng, Algorithm::Ed25519)
+            .expect("generate host fixture");
+        let public_key = private_key
+            .public_key()
+            .to_openssh()
+            .expect("encode host fixture");
+        let known_host = format!("owlmux-target {public_key}\n");
+        let parsed = parse_known_host(known_host.as_bytes()).expect("parse known host");
+        assert_eq!(parsed.public_key, public_key);
+        assert_eq!(
+            parsed.fingerprint_sha256,
+            private_key
+                .public_key()
+                .fingerprint(HashAlg::Sha256)
+                .to_string()
+        );
+        assert!(parse_known_host(known_host.trim_end().as_bytes()).is_err());
+        assert!(parse_known_host(format!("other-target {public_key}\n").as_bytes()).is_err());
+        assert!(parse_known_host(format!("{known_host}{known_host}").as_bytes()).is_err());
+        assert!(parse_known_host(b"owlmux-target ssh-rsa invalid\n").is_err());
     }
 
     #[test]

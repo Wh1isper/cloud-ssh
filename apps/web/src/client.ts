@@ -52,7 +52,6 @@ const ERROR_CODES = new Set<ErrorCode>([
   "invalid_target_account",
   "invalid_tmux_path",
   "invalid_tmux_socket",
-  "invalid_host_identity",
   "not_found",
   "credential_in_use",
   "credential_limit",

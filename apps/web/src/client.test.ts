@@ -292,6 +292,47 @@ describe("API client lifecycle", () => {
     });
   });
 
+  it("creates a Machine without caller-supplied SSH host identity", async () => {
+    installClientEnvironment();
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        calls.push({
+          method: init?.method ?? "GET",
+          path: url.pathname,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        });
+        return Response.json({});
+      }),
+    );
+    const client = createApiClient("owlmux_sk_v1_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE");
+
+    await client.createMachine({
+      alias: "target-a",
+      ssh_credential_id: "123e4567-e89b-42d3-a456-426614174000",
+      target_account: "owlmux",
+      tmux_path: "/usr/bin/tmux",
+      tmux_socket_identity: "default",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/v1/machines",
+        body: {
+          alias: "target-a",
+          ssh_credential_id: "123e4567-e89b-42d3-a456-426614174000",
+          target_account: "owlmux",
+          tmux_path: "/usr/bin/tmux",
+          tmux_socket_identity: "default",
+        },
+      },
+    ]);
+    expect(calls[0]?.body).not.toHaveProperty("host_identity");
+  });
+
   it("uses closed same-origin routes for Machine lifecycle controls", async () => {
     installClientEnvironment();
     const calls: Array<{ method: string; path: string; body: string | null }> = [];

@@ -24,12 +24,28 @@ PUBLISHED_FIXTURES = (
         ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "setup.json",
     ),
     (
+        RELAY_ROOT / "fixtures" / "host-key.json",
+        ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "host-key.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "host-key-accepted.json",
+        ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "host-key-accepted.json",
+    ),
+    (
         RELAY_ROOT / "fixtures" / "unknown-field.json",
         ROOT / "crates" / "owlmux-server" / "fixtures" / "relay" / "unknown-field.json",
     ),
     (
         RELAY_ROOT / "fixtures" / "setup.json",
         ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "setup.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "host-key.json",
+        ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "host-key.json",
+    ),
+    (
+        RELAY_ROOT / "fixtures" / "host-key-accepted.json",
+        ROOT / "crates" / "owlmux-relay" / "fixtures" / "relay" / "host-key-accepted.json",
     ),
     (
         RELAY_ROOT / "fixtures" / "open-stream.json",

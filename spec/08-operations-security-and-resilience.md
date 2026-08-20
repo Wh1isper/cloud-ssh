@@ -267,7 +267,7 @@ Same-origin XSS or compromised Browser can steal the in-memory API key, observe 
 
 ### 7.4 Target compromise
 
-A compromised expected target controls sshd, tmux, shell behavior, terminal bytes, and Relay. Host verification detects a different host, not malicious behavior by the enrolled host.
+A compromised pinned target controls sshd, tmux, shell behavior, terminal bytes, and Relay. First-use confirmation and later strict host verification detect a different key, not malicious behavior by the accepted host.
 
 ### 7.5 Relay compromise
 
@@ -291,7 +291,7 @@ flowchart LR
     Machine --> Owner
     Owner --> Credential["Selected Deployment SSH credential"]
     Credential --> Route["Enrolled Relay route identity"]
-    Route --> Host["Expected SSH host identity"]
+    Route --> Host["First-enrollment-confirmed SSH host identity"]
     Host --> Account["Target Unix account"]
     Account --> Tmux["Typed tmux client"]
 
