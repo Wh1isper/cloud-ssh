@@ -4,7 +4,7 @@ Same-origin terminal-first React application shell and interactive workspace for
 
 The Browser:
 
-- keeps the single Deployment API key only in current page memory and sends it on every protected request;
+- strictly validates the Deployment API-key shape, attempts to save only a successfully Server-verified key in one fixed versioned same-origin `localStorage` entry, restores and revalidates it under a ten-second deadline on later loads, and sends the active page-memory copy on every protected request;
 - enters `/workspaces` after `/login` and provides same-origin `/hosts`, `/hosts/new`, `/hosts/{id}`, `/ssh-credentials`, `/audit`, and `/deployment` journeys;
 - calls durable Machine resources Hosts in the product UI while keeping Machine vocabulary in API/domain/contracts;
 - provides generated credential management, complete Machine/Relay lifecycle controls, active-Machine credential rebind, immutable target-scope detail, safe audit events, and durable unknown-outcome reconciliation;
@@ -21,7 +21,7 @@ The Browser:
 - keeps observer stdin disabled, prevents hidden/observer tabs from changing target geometry, updates an existing xterm renderer in place across role changes, bounds and confirms paste, and never queues or retries an excess or ambiguous target mutation;
 - treats a typed ambiguity, interrupted mutation response, malformed mutation response, or untyped mutation timeout as an unknown durable outcome, disables every mutation control, and requires a successful explicit summary refresh before another mutation.
 
-The API key and workspace tabs are never stored in cookies, Web Storage, IndexedDB, Cache Storage, a service worker, a URL, or serialized application state. Internal SPA navigation preserves current page memory. Reload, page close, navigation away, logout, HTTP 401, or an attachment `unauthenticated` frame disposes the shared client, closes its sockets/requests, clears tabs and the key candidate, and requires re-entry.
+The raw API key's only permitted Browser persistence is the fixed `owlmux.deployment_api_key.v1` `localStorage` entry for the Deployment origin. Malformed stored values are removed without transport, and successful restore does not rewrite the entry. If local storage is blocked, current-page verified access continues, but a persistent warning states that current-key persistence is unconfirmed and a previous value may remain. The key never enters cookies, `sessionStorage`, IndexedDB, Cache Storage, a service worker, a URL, or another serialized application state. Internal SPA navigation preserves current page state. Reload, page close, or navigation away cancels pending verification, disposes the shared client, closes its sockets/requests, and clears workspace tabs; late responses have no effect. A later load restores and revalidates a valid saved key. Logout, HTTP 401, or an attachment `unauthenticated` result always clears page authority and attempts saved-key removal; failed removal displays an instruction to clear origin site data. Ordinary network/unavailability/validation-timeout failure keeps any saved candidate available for explicit retry.
 
 The Browser always uses the one Deployment origin. A Server ingress may route an already authenticated attachment to the current remote owner, but the Browser never receives an internal endpoint, node identity, cluster credential, or a second-hop protocol.
 

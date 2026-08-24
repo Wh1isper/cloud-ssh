@@ -18,15 +18,15 @@ Fixed private-key encryption protects database contents at rest, not a compromis
 
 ## Deployment API key
 
-One `OWLMUX_API_KEY`, formatted as `owlmux_sk_v1_` plus canonical unpadded base64url for exactly 32 operator-generated random bytes, grants complete Deployment authority. The same value is configured on every node. Deployment is the sole human/API trust boundary and has no finer-grained authorization or persistent Browser-authentication state.
+One `OWLMUX_API_KEY`, formatted as `owlmux_sk_v1_` plus canonical unpadded base64url for exactly 32 operator-generated random bytes, grants complete Deployment authority. The same value is configured on every node. Deployment is the sole human/API trust boundary and has no finer-grained authorization or Server-issued Browser session.
 
-Browser keeps the key only in current page memory, sends Bearer on every protected HTTP request, and sends it once as the first bounded attachment-WebSocket frame. It never enters URL/query/cookie/subprotocol/Web Storage/service worker/logs/analytics. Reload or logout clears it.
+Browser rejects malformed key input and stored values before transport. After successful verification, it attempts to save the key in the fixed versioned `owlmux.deployment_api_key.v1` same-origin `localStorage` entry, restores and revalidates a valid candidate under a ten-second deadline on later loads, sends Bearer on every protected HTTP request, and sends the active page-memory copy once as the first bounded attachment-WebSocket frame. It never enters URL/query/cookie/subprotocol/`sessionStorage`/IndexedDB/Cache Storage/service worker/logs/analytics or another serialized state. Reload cancels pending verification, clears workspace/page state, and retains a valid saved candidate; logout or authentication failure always clears page authority and attempts saved-key removal. Storage write/removal failure is visibly reported, and removal failure requires manual origin-site-data cleanup.
 
 The accepting node verifies the key before Machine lookup, owner resolution, internal owner-WSS, or target allocation. Attachment and Relay upgrades share a node-wide pre-authentication attempt bound plus an expiry-pruned per-observed-TCP-peer bound; those attempt permits are released immediately after first-frame authentication, while established connections retain their separate capacity permit. OwlMux does not trust forwarded-address headers, so a reverse proxy is intentionally one observed peer for this limiter and must enforce any desired client-IP policy itself. Only Browser/Machine-affine API traffic may use at most one owner hop; Relay/enrollment stays on its accepting node. A remote owner receives only short-lived cluster-authenticated verified context, never raw API-key bytes.
 
-Same-origin XSS can steal the key and control the entire Deployment. Restrictive CSP, no third-party scripts, safe rendering, exact Origin, and memory-only handling are security boundaries, not optional UI hardening.
+Same-origin XSS or Browser-profile compromise can steal the saved key and control the entire Deployment. Restrictive CSP, no third-party scripts, safe rendering, exact Origin, HTTPS, and protection of the Browser/OS profile are security boundaries, not optional UI hardening. The convenience of persistence increases credential exposure compared with page-memory-only handling.
 
-Key rotation drains/stops all nodes, waits for old leases to become invalid, replaces the sole value, increments the Deployment configuration epoch/proof, and starts coherent nodes. Old connections and config generations cannot rejoin. An ordinary unchanged-key node restart may reuse a still-open page-memory candidate for fresh authentication. Rotation has no grace key, online mutation, per-node transition, or durable authentication state.
+Key rotation drains/stops all nodes, waits for old leases to become invalid, replaces the sole value, increments the Deployment configuration epoch/proof, and starts coherent nodes. Old connections and config generations cannot rejoin. An ordinary unchanged-key node or Browser restart may restore and revalidate the same-origin saved candidate. Fresh authentication with an old candidate clears page authority and triggers saved-key removal with visible cleanup-failure handling. Rotation has no grace key, online mutation, per-node transition, or Server-side session state.
 
 ## Cluster trust and fencing
 
@@ -74,7 +74,7 @@ Distinct credential classes are:
 - Deployment SSH credential;
 - SSH private-key encryption key.
 
-No credential is accepted as another class. Raw values remain out of URLs, logs, telemetry, audit, internal challenge/HMAC transcripts, and persistent Browser storage.
+No credential is accepted as another class. Raw values remain out of URLs, logs, telemetry, audit, internal challenge/HMAC transcripts, and Browser persistence except for the Deployment API key's one fixed same-origin `localStorage` entry.
 
 OpenSSH uses a dedicated Server-owned configuration, exclusive host inputs, the first-enrollment-confirmed host pin, the exact Machine-selected Deployment credential, `IdentitiesOnly`, and no ambient target-authentication agent. Every node has a separate non-shared private runtime root with one exclusive startup directory and one exclusive directory per owner-local child, preferably on local tmpfs. Each identity is an exclusive `0600` file. The owner keeps the path through spawn/TCP/banner/host verification and unlinks only after the first valid authenticated remote-protocol record proves OpenSSH loaded it.
 

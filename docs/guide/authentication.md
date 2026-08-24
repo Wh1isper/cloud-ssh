@@ -1,27 +1,33 @@
 # Deployment access and SSH credentials
 
 ::: info Current scope
-The Deployment API key, page-memory-only Browser handling, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, explicit active-Machine credential rebind, internal cluster authentication, one-hop remote-owner routing, safe audit presentation, and cold all-node API-key replacement are implemented.
+The Deployment API key, same-origin Browser key persistence and revalidation, generated encrypted SSH credentials, complete Machine/Relay lifecycle controls, explicit active-Machine credential rebind, internal cluster authentication, one-hop remote-owner routing, safe audit presentation, and cold all-node API-key replacement are implemented.
 :::
 
 ## One Deployment API key
 
 Each OwlMux Deployment uses one `OWLMUX_API_KEY` formatted as `owlmux_sk_v1_` plus the canonical unpadded base64url encoding of exactly 32 operator-generated cryptographically random bytes. The same value is configured on every Server node. Anyone holding it has complete access to every Machine, SSH credential, enrollment workflow, Browser workspace, and typed operation in that Deployment.
 
-Deployment is the sole human/API trust boundary. OwlMux does not subdivide it into identities, delegated grants, per-resource authorization, node-scoped grants, alternate login methods, or persistent Browser authentication state.
+Deployment is the sole human/API trust boundary. OwlMux does not subdivide it into identities, delegated grants, per-resource authorization, node-scoped grants, alternate login methods, or Server-issued Browser sessions.
 
-The Browser presents one masked key field and one **Open OwlMux** action, then enters `/workspaces` while keeping the value only in current page memory:
+The Browser presents one masked, exact-length canonical key field with a visibility toggle and one **Open OwlMux** action. It rejects malformed input before transport. After successful input verification it attempts to store the exact value in the fixed versioned `owlmux.deployment_api_key.v1` `localStorage` entry for this origin, enters `/workspaces`, and keeps the active-client copy in current page memory; a successful saved-key restore does not rewrite that entry. If storage is blocked, current-page access continues, but OwlMux warns that it cannot confirm the current key was saved and that a previous value may remain:
 
+- a later load removes malformed saved content without transport, shows a bounded restoring state for a valid candidate, and freshly verifies it within ten seconds before authenticated product data appears;
 - every protected HTTP request sends `Authorization: Bearer` to the one Deployment origin;
-- attachment WebSocket sends the key in one bounded first authentication frame under a five-second deadline;
+- attachment WebSocket sends the active key in one bounded first authentication frame under a five-second deadline;
 - after authentication, attachment lifetime follows the WebSocket transport and explicit lifecycle/fencing events rather than an application idle timeout or heartbeat;
 - no Machine lookup, owner resolution, internal owner-WSS, route, SSH, tmux, projection, or writer state is allocated before that frame succeeds;
 - Server copies the bounded authentication text into a mutable application buffer, drops the WebSocket-library frame, and clears both that complete encoded copy and the parsed key before continuing;
-- the key never enters URL, query, cookie, WebSocket subprotocol, local/session storage, IndexedDB, service worker, logs, or analytics;
-- internal SPA navigation among Workspaces, Hosts, Credentials, Audit, and Deployment retains the key and page-memory workspace tabs;
-- reload, Browser page/tab close, logout, or navigation away clears the key and every workspace tab and requires re-entry;
-- closing one OwlMux workspace tab detaches only its Attachment and does not clear the shared page key;
+- the key never enters URL, query, cookie, WebSocket subprotocol, `sessionStorage`, IndexedDB, Cache Storage, service worker, logs, analytics, or another serialized state;
+- internal SPA navigation among Workspaces, Hosts, Credentials, Audit, and Deployment retains the active key and page-memory workspace tabs;
+- reload, Browser page/tab close, or navigation away cancels pending verification and clears page-memory workspace state but retains a valid saved key for fresh validation on a later load; a late response cannot save or activate access;
+- logout, HTTP 401, or attachment authentication failure always clears in-memory authority and every workspace tab, then attempts to remove the saved copy;
+- if saved-key removal fails, OwlMux ends the page session, visibly instructs the operator to clear site data for the origin, and does not claim that persistent cleanup succeeded;
+- transport, validation-timeout, or Deployment-unavailable failure retains any saved candidate for explicit retry;
+- closing one OwlMux workspace tab detaches only its Attachment and does not clear the shared key;
 - Browser never receives or selects a Server node.
+
+The saved raw key still grants complete Deployment access; it is not a scoped session or encrypted substitute. Protect the Browser and OS profile, use HTTPS, and avoid shared Browser profiles. Same-origin XSS or profile compromise can read the saved value.
 
 If Browser or Machine-affine API ingress is not the current owner, it clears the raw key candidate and opens at most one internal WSS hop to that owner. The owner verifies exact incarnations, leases, Server build/configuration epoch, Machine route revision, and connection epoch before allocating state. One-shot API control uses typed request/result/close over the same WSS challenge mode; there is no internal HTTPS variant. Raw API-key bytes are never forwarded. Relay/enrollment never uses this hop.
 
@@ -33,7 +39,7 @@ API-key rotation is Deployment-wide:
 4. increment the Deployment configuration epoch/proof;
 5. start only coherent nodes.
 
-A still-open page clears its old in-memory candidate when fresh authentication fails and asks for the new key. An ordinary unchanged-key node restart may instead reuse that still-open page-memory candidate for a fresh connection. Rotation has no grace key, online mutation, per-node transition, or durable authentication state.
+Fresh authentication failure always clears the old in-memory candidate, attempts saved-key removal, reports any removal failure, and asks for the new key. An ordinary unchanged-key node or Browser restart may instead restore and revalidate the same-origin saved candidate. Rotation has no grace key, online mutation, per-node transition, or Server-side session state.
 
 ## Internal cluster authentication
 

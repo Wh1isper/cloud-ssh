@@ -8,7 +8,7 @@ Each OwlMux Deployment has exactly one human/API access credential:
 OWLMUX_API_KEY=owlmux_sk_v1_<canonical-unpadded-base64url-of-32-random-bytes>
 ```
 
-The same current key is configured on every Server node and grants complete access to every OwlMux HTTP API, Browser workspace, Machine, SSH credential, enrollment workflow, and typed target operation in that Deployment. Deployment is the sole human/API trust boundary; OwlMux does not subdivide it into identities, delegated grants, resource ACLs, node-scoped grants, or persistent Browser authentication state.
+The same current key is configured on every Server node and grants complete access to every OwlMux HTTP API, Browser workspace, Machine, SSH credential, enrollment workflow, and typed target operation in that Deployment. Deployment is the sole human/API trust boundary; OwlMux does not subdivide it into identities, delegated grants, resource ACLs, node-scoped grants, or Server-issued Browser sessions.
 
 A public request may reach any Serving Server node at the one Deployment origin. The accepting node performs the external API-key boundary. It either executes non-Machine-affine work locally or, after authentication, routes Machine-affine work to the current fenced Machine owner over at most one cluster-authenticated internal WSS hop. The raw API key is never forwarded to another node.
 
@@ -43,7 +43,7 @@ Rotation means:
 
 As specified in [06](06-storage-consistency-and-private-key-encryption.md#31-deployment-identity-and-configuration-epoch), configuration transition, node registration, and lease renewal each take an exclusive lock on the same `DEPLOYMENT` row and recheck epoch/proof while holding it. The no-valid-lease check therefore cannot race an old-epoch registration or renewal.
 
-The old key and all old public/internal authenticated connections cease to work. A still-open Browser page may retain its page-memory candidate, but the old value fails fresh HTTP/WebSocket authentication, is cleared on that failure, and must be replaced by user input. There is no dual-key grace, hot rotation, key history, per-node transition, or session revocation table. A node with the old config epoch/proof cannot rejoin.
+The old key and all old public/internal authenticated connections cease to work. A Browser may retain the old value in page memory or the fixed same-origin `localStorage` entry, but the value fails fresh HTTP/WebSocket authentication, both Browser copies are cleared on that failure, and it must be replaced by user input. There is no dual-key grace, hot rotation, key history, per-node transition, or session revocation table. A node with the old config epoch/proof cannot rejoin.
 
 The same cold semantics apply in the single-node profile; only one process is drained.
 
@@ -58,11 +58,11 @@ Authorization: Bearer <OWLMUX_API_KEY>
 The accepting Server node independently verifies the current key on every request before Machine/resource lookup, owner resolution, internal owner-WSS routing, or side effect. The key is forbidden in:
 
 - URLs and query strings;
-- cookies;
-- form fields other than the dedicated in-memory Browser login input;
+- cookies, `sessionStorage`, IndexedDB, Cache Storage, and service-worker state;
+- form fields other than the dedicated Browser login input;
 - WebSocket subprotocol values;
 - HTML or frontend bundles;
-- browser storage;
+- Browser persistence other than the one fixed versioned same-origin `localStorage` entry specified below;
 - logs, telemetry, errors, audit, process arguments, internal authentication transcripts, or owner-WSS payloads.
 
 A missing, malformed, or wrong key produces one generic bounded unauthenticated result and no resource-existence, owner-placement, node-membership, or internal-endpoint disclosure.
@@ -71,15 +71,15 @@ A protected HTTP operation that is not Machine-affine may run on the accepting n
 
 ## 4. Browser handling
 
-The Browser has one login screen with one masked API-key input. It keeps the entered value only in JavaScript memory for the current page lifetime and attaches it as Bearer authorization to each protected HTTP request.
+The Browser has one login screen with one masked API-key input bounded to the exact 56-character canonical key shape. It rejects malformed input before transport. On load it reads only the fixed versioned `owlmux.deployment_api_key.v1` `localStorage` entry; a malformed, empty, oversized, or noncanonical stored value is removed without becoming an Authorization header. A well-formed saved candidate enters a bounded restoring state and receives one fresh `GET /api/v1/deployment` verification with a ten-second deadline before any authenticated product data appears. Page exit or component teardown cancels the pending client, and a late result cannot write storage, navigation, or authenticated state.
 
-The Browser MUST NOT write the key to:
+After successful input verification, the Browser attempts to write the exact key to that one same-origin entry and retains one active-client copy in JavaScript page memory. A successful saved-key restore does not rewrite the existing entry. If local storage is blocked or an input-path write fails, verified current-page access continues, but the Browser cannot confirm that the current key was saved and a previous value may remain; the authenticated shell displays a persistent warning with manual site-data guidance. The `localStorage` entry, when present, is raw full-Deployment authority, not a Server-issued session, refresh token, encrypted envelope, or lesser grant. The Browser MUST NOT copy the key to `sessionStorage`, IndexedDB, Cache Storage, cookies, service-worker state, URL/history, clipboard, logs, analytics, crash reporting, another storage key, or serialized application state.
 
-- `localStorage`, `sessionStorage`, IndexedDB, Cache Storage, cookies, service-worker state, URL/history, clipboard, logs, analytics, crash reporting, or serialized application state.
+Explicit logout, an HTTP `401`, or attachment-WebSocket authentication failure always closes and clears page-local clients, pending authentication, input candidates, and workspaces, then attempts to remove the one `localStorage` entry. A failed initial restore caused by wrong/replaced authority does the same and presents the login input. If Browser storage removal throws, OwlMux MUST NOT claim that persistent cleanup succeeded: it ends the page session, displays a warning that the operator must clear site data for the origin, and leaves no in-memory client usable. A transport, validation-timeout, Deployment-unavailable, or other non-authentication failure keeps any saved candidate and returns to a masked retryable login state. Page reload, navigation away, tab close, or renderer crash clears page-local clients, workspace tabs, projections, terminal buffers, and pending operations but retains a valid saved key; the next load must freshly verify it before authenticated use.
 
-Page reload, navigation away, tab close, renderer crash, or explicit logout clears the only Browser copy and requires re-entry. Logout is a local memory-clear operation; it does not mutate Server authority because no Browser session exists.
+Logout is entirely Browser-local and does not mutate Server authority because no Browser session exists. The Server neither knows nor trusts whether a request key came from input, page memory, or local storage.
 
-A same-origin XSS can read the in-memory key and has full Deployment authority. Restrictive CSP, no third-party scripts, safe rendering, and short page lifetime are therefore part of the bastion boundary.
+A same-origin XSS or compromise of the Browser profile can read the persisted key and obtains full Deployment authority after fresh Server verification. Restrictive CSP, no third-party scripts, safe rendering, HTTPS, and protection of the Browser/OS profile are therefore part of the bastion boundary. Persisting the key favors operator convenience and is not equivalent to a revocable or scoped login session.
 
 Browser uses only the Deployment origin. It MUST NOT receive, persist, select, or retry against internal Server-node endpoints. Public load-balancer stickiness is an optional performance optimization, not Browser state or authority.
 
@@ -196,6 +196,6 @@ OwlMux provides no automatic cross-Deployment migration, shared key authority, f
 - Browser WebSocket permits only one bounded external first auth frame under a short deadline and allocates no Machine, owner-WSS, or Attachment resources before success.
 - A remote owner receives one destination-challenged cluster-HMAC result/context over WSS under its own suspend-aware deadline, never raw API-key bytes, sender timestamps, or a reusable verifier/assertion; one-shot API requests use the same WSS mode rather than internal HTTPS.
 - Stale source/destination node incarnations, config epochs, owner epochs, challenge responses, and connections fail closed; a valid but unreachable owner yields `owner_unreachable` until the operator fences that node and its lease expires.
-- Browser refresh/logout clears the key and requires re-entry; no persistent Browser copy exists.
-- Ordinary ingress/owner restart with an unchanged key permits a still-open page to perform fresh origin authentication; replacement-key cluster restart rejects and clears the old Browser candidate without dual-key grace.
+- Browser attempts to persist only the successfully verified key in one fixed versioned same-origin `localStorage` entry; reload restores and freshly verifies a valid candidate, while logout or authentication failure always ends page authority, attempts saved-key removal, visibly reports storage failure, and requires re-entry.
+- Ordinary ingress/owner restart with an unchanged key permits a still-open page to perform fresh origin authentication; replacement-key cluster restart rejects the old Browser candidate and triggers removal without dual-key grace.
 - Separate Deployments share no authority and make no migration or failover continuity claim.

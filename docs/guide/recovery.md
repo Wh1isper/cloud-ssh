@@ -82,7 +82,7 @@ API-key, cluster-key, Server-build, public-origin, encryption-key configuration,
 7. verify the old API key receives `401` and the new key can read the expected Deployment epoch;
 8. reopen the public origin.
 
-There is no grace key, mixed-build rolling transition, per-node rotation, or old-page session. A Browser clears an invalid page-memory candidate and returns to `/login`. Target tmux continues throughout.
+There is no grace key, mixed-build rolling transition, per-node rotation, or old-page session. Fresh Browser authentication failure clears page authority, attempts invalid saved-key removal, reports any storage cleanup failure, and returns to `/login`. Target tmux continues throughout.
 
 ## SSH encryption-key loss or disclosure
 

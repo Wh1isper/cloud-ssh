@@ -106,7 +106,7 @@ This is a source-level rule. Modules remain inside `owlmux-server` until real im
 
 Browser owns:
 
-- a masked Deployment API-key input held only in memory;
+- a masked exact-length Deployment API-key input plus one fixed versioned same-origin `localStorage` entry: strictly reject malformed candidates, freshly validate a valid candidate under a bounded deadline, attempt persistence only after success, always clear page authority on logout/authentication failure, and visibly report storage write/removal failures;
 - one same-origin terminal-first shell whose Host labels map only to Machine API/domain resources;
 - safe Machine, SSH-credential, enrollment, audit, and Deployment-presentation workflows;
 - a bounded page-memory workspace-tab registry and active-tab state, with one independent Attachment lifecycle per tab;
@@ -115,7 +115,7 @@ Browser owns:
 - reconnect policy and atomic projection replacement;
 - local non-authoritative display preferences.
 
-Browser MUST NOT own authorization decisions, durable credentials, Machine reachability truth, Server-node discovery/placement, SSH or Relay credentials, tmux command rendering, or durable terminal state.
+Browser MUST NOT own authorization decisions, any durable credential other than the one optional raw Deployment API-key `localStorage` copy, Machine reachability truth, Server-node discovery/placement, SSH or Relay credentials, tmux command rendering, or durable terminal state. Browser storage failure cannot weaken fresh Server verification or block current-page access, but it makes persistence unconfirmed and requires a visible warning because a previous stored value may remain.
 
 ### 4.2 Every Server node
 

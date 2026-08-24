@@ -36,7 +36,7 @@ make docker-build
 make dev
 ```
 
-Open `http://127.0.0.1:8080`, enter the disposable API key from `dev/server.env`, and select **Open OwlMux**. Authentication lands on `/workspaces`. The same-origin header links Workspaces, Hosts, Credentials, and Audit; the Deployment status opens `/deployment`. The key and at most 16 workspace tabs remain only in current page memory. Internal navigation preserves them, while reload, logout, page close, or navigation away clears them. The Server initializes PostgreSQL, creates the default generated Ed25519 credential, registers one fenced node incarnation, and exposes the protected application.
+Open `http://127.0.0.1:8080`, enter the disposable API key from `dev/server.env`, and select **Open OwlMux**. Authentication lands on `/workspaces`. The same-origin header links Workspaces, Hosts, Credentials, and Audit; the Deployment status opens `/deployment`. After fresh Server verification, the Browser attempts to save the key only in the fixed same-origin `localStorage` entry and revalidates a valid candidate within ten seconds on later loads. At most 16 workspace tabs remain in current page memory: internal navigation preserves them, while reload, logout, page close, or navigation away clears them. Logout or authentication failure always ends page access and attempts saved-key removal; Browser storage failure produces a visible cleanup warning. The Server initializes PostgreSQL, creates the default generated Ed25519 credential, registers one fenced node incarnation, and exposes the protected application.
 
 Start PostgreSQL separately when needed:
 

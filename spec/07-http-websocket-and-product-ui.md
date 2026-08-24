@@ -58,7 +58,7 @@ Every protected HTTP request independently validates `Authorization: Bearer` at 
 
 Non-Machine-affine operations execute on the accepting node. A Machine-affecting operation that can invalidate live access resolves the actual owner and uses one typed cluster-authenticated WSS request when remote; the current owner serializes it with dispatch. If that valid owner is unreachable, the public result is `owner_unreachable`; the operator fences/stops/isolates the owner, waits for lease expiry, and retries. There is no bypass, remote eviction, or separate internal HTTPS mode. Raw Bearer bytes never cross this hop.
 
-The public access contract is closed to direct Bearer verification and first-frame attachment authentication. It exposes no internal node selection, credential exchange, durable Browser-authentication state, delegated authority, or alternate human-authentication route.
+The public access contract is closed to direct Bearer verification and first-frame attachment authentication. It exposes no internal node selection, credential exchange, Server-issued Browser session, delegated authority, or alternate human-authentication route. Browser-local persistence of the same raw key does not create another credential class.
 
 ### 2.1 Relay surfaces
 
@@ -66,11 +66,11 @@ Relay WebSockets do not accept Deployment Bearer credentials, Browser API-key fr
 
 ## 3. HTTP API-key transport
 
-The Browser keeps the key only in page memory and sends it on every protected HTTP request. Direct clients use the same Bearer surface.
+The Browser accepts only the exact canonical 56-character API-key shape and never transports malformed input or stored values. It attempts to store a successfully verified key in the fixed versioned same-origin `owlmux.deployment_api_key.v1` `localStorage` entry, restores and revalidates a valid candidate on later loads under a ten-second deadline, keeps the active-client copy in page memory, and sends that copy on every protected HTTP request. Direct clients use the same Bearer surface. Browser storage unavailability or write failure does not block current-page access, but the Browser cannot confirm that the current key was saved and a previous value may remain; it produces a persistent visible warning rather than a false persistence claim.
 
-Protected responses use explicit no-store policy where they contain sensitive control metadata. The raw key is never echoed. Browser authentication has no Server-side persistence, expiry/refresh protocol, or logout request; logout is local key/state clearing. CORS is disabled by default; if explicitly enabled for a trusted integration origin, that policy does not weaken Bearer verification.
+Protected responses use explicit no-store policy where they contain sensitive control metadata. The raw key is never echoed. Browser authentication has no Server-side persistence, expiry/refresh protocol, or logout request; logout is local key/state clearing plus one best-effort storage removal whose failure is explicitly reported. CORS is disabled by default; if explicitly enabled for a trusted integration origin, that policy does not weaken Bearer verification.
 
-A Browser logout action closes every public/one-hop attachment in the page, clears the in-memory key, workspace tabs, resource data, pending operations, terminal renderers, and local authenticated navigation state, then returns to `/login`. Reload, page close, and navigation away have the same page-lifetime effect. Internal SPA navigation among OwlMux routes retains the key and workspace tabs. None of these actions needs to know which node owns a Machine.
+A Browser logout action closes every public/one-hop attachment in the page, clears the in-memory key, input candidate, workspace tabs, resource data, pending operations, terminal renderers, and local authenticated navigation state, attempts to remove the saved key, then returns to `/login`. An HTTP or attachment authentication failure follows the same path. A storage-removal exception cannot keep the page session active and MUST produce a warning to clear origin site data. Reload, page close, and navigation away have the same page-local cleanup effect but retain a valid saved key; a later load restores and freshly verifies it before reconstructing an empty shell. Pending verification is canceled on page exit, and a late result cannot persist or activate access. Internal SPA navigation among OwlMux routes retains the active key and workspace tabs. None of these actions needs to know which node owns a Machine.
 
 ## 4. Public contract rules
 
@@ -253,11 +253,13 @@ Writer semantics, takeover ordering, epochs, rehydration, and ambiguity are owne
 
 ```mermaid
 stateDiagram-v2
-    [*] --> LoggedOut
-    LoggedOut --> Shell: user enters API key in memory
+    [*] --> Restoring
+    Restoring --> LoggedOut: no saved key or authentication fails
+    Restoring --> Shell: saved key validates
+    LoggedOut --> Shell: entered key validates; save succeeds or warns
     Shell --> Connecting: user opens Host in a new workspace tab
     Connecting --> Selecting: authentication and discovery succeed
-    Connecting --> LoggedOut: API-key authentication fails
+    Connecting --> LoggedOut: API-key authentication fails; remove saved key or warn
     Connecting --> Failed: connection or target setup fails
     Selecting --> Ready: explicit select/create and hydration succeed
     Selecting --> Failed: selection/create fails
@@ -267,10 +269,11 @@ stateDiagram-v2
     Ready --> Shell: detach or close this tab
     Failed --> Shell: close this tab
     Failed --> Connecting: explicit reconnect
-    Shell --> LoggedOut: logout, reload, page close, or navigation away
+    Shell --> LoggedOut: logout clears page state; remove saved key or warn
+    Shell --> Restoring: reload starts an empty page and revalidates saved key
 ```
 
-The shell owns at most 16 page-memory workspace tabs. Each tab has one independent Attachment phase, session-title hint, projection, renderer set, and close/detach lifecycle. Switching tabs or navigating among internal SPA management pages preserves every tab and connection; only the active workspace is visible, and only a visible ready writer may generate automatic resize intent. Closing one tab disposes only its Attachment. Logout, reload, page close, or navigation away disposes all tabs and the shared API client. The Browser never persists a tab, API key, node/owner placement, terminal bytes, projection, writer authority, or pending operation.
+The shell owns at most 16 page-memory workspace tabs. Each tab has one independent Attachment phase, session-title hint, projection, renderer set, and close/detach lifecycle. Switching tabs or navigating among internal SPA management pages preserves every tab and connection; only the active workspace is visible, and only a visible ready writer may generate automatic resize intent. Closing one tab disposes only its Attachment. Logout, reload, page close, or navigation away disposes all tabs and the shared API client. Logout and authentication failure additionally attempt saved-key removal and warn if the Browser refuses it. The Browser never persists a tab, node/owner placement, terminal bytes, projection, writer authority, or pending operation.
 
 Browser discards old projection, pending mutation assumptions, and renderers before installing any new Machine connection or Attachment epoch within a tab. Writer status is orthogonal and limited to observer or writer; multiple tabs for one Machine remain separate attachments but still compete for the single owner-local writer pointer. A claim/takeover is a pending request until its result. Current owner-process memory is authoritative. A higher Machine connection epoch invalidates every prior attachment. Native tmux clients remain outside Browser writer coordination.
 
@@ -290,12 +293,12 @@ flowchart LR
 
 ### 10.1 Login
 
-- one masked deployment API-key field and one `Open OwlMux` action;
-- key retained only in current page memory;
-- successful authentication enters `/workspaces`;
-- no alternate authentication mode, credential exchange, persistent login, or external redirect;
-- authentication failure clears entered key and resource state;
-- page refresh requires re-entry.
+- one masked, exact-length canonical Deployment API-key field, one visibility toggle, and one `Open OwlMux` action;
+- successful authentication attempts to save the key in the fixed versioned same-origin `localStorage` entry and enters `/workspaces`; a write failure keeps current-page access and displays a persistent warning;
+- a later load rejects/removes malformed stored input without transport, presents a bounded restoring state for a valid candidate, and validates it within ten seconds before authenticated content;
+- no alternate authentication mode, credential exchange, Server-issued session, or external redirect;
+- authentication failure clears entered/resource state and attempts saved-key removal, warning on failure, while a transport/unavailability/timeout failure retains the candidate for retry;
+- page refresh clears workspace state, then restores and freshly verifies a valid saved key; page exit invalidates the attempt so a late result has no effect.
 
 ### 10.2 Hosts
 
@@ -340,19 +343,19 @@ flowchart LR
 
 ## 11. Frontend state boundaries
 
-| State                       | Browser treatment                                                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| Deployment API key          | Current page memory only; clear on failure/logout/reload/page close/navigation away            |
-| Internal SPA route          | Page-memory navigation only; changing it retains the key and workspace tabs                    |
-| Workspace tabs/active tab   | At most 16 in page memory; each owns one Attachment; never serialized or restored              |
-| Machine/credential metadata | Server-authoritative API data                                                                  |
-| Owner/Relay reachability    | Advisory presentation with no node identity/endpoint                                           |
-| Machine owner route         | Never Browser state; always resolved at Deployment origin                                      |
-| Selection/projection        | Tab-local Machine-connection-epoch and attachment-epoch-scoped memory with atomic replacement  |
-| Writer state                | Current owner message only; shared pointer semantics across same-Machine tabs; never persisted |
-| Terminal bytes/scrollback   | Tab-local xterm.js memory; never Web storage/cache                                             |
-| Pending operation           | Tab-local correlation only; no replay                                                          |
-| UI display preferences      | Local, non-authoritative, and contain no credentials/terminal content                          |
+| State                       | Browser treatment                                                                                                                                                                            |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deployment API key          | One attempted same-origin `localStorage` copy plus active page copy; strict bounded restore/revalidation; page copy always cleared on logout/auth failure; storage failures visibly reported |
+| Internal SPA route          | Page-memory navigation only; changing it retains the key and workspace tabs                                                                                                                  |
+| Workspace tabs/active tab   | At most 16 in page memory; each owns one Attachment; never serialized or restored                                                                                                            |
+| Machine/credential metadata | Server-authoritative API data                                                                                                                                                                |
+| Owner/Relay reachability    | Advisory presentation with no node identity/endpoint                                                                                                                                         |
+| Machine owner route         | Never Browser state; always resolved at Deployment origin                                                                                                                                    |
+| Selection/projection        | Tab-local Machine-connection-epoch and attachment-epoch-scoped memory with atomic replacement                                                                                                |
+| Writer state                | Current owner message only; shared pointer semantics across same-Machine tabs; never persisted                                                                                               |
+| Terminal bytes/scrollback   | Tab-local xterm.js memory; never Web storage/cache                                                                                                                                           |
+| Pending operation           | Tab-local correlation only; no replay                                                                                                                                                        |
+| UI display preferences      | Local, non-authoritative, and contain no credentials/terminal content                                                                                                                        |
 
 Service workers MUST NOT cache protected API responses, terminal data, or API keys.
 
@@ -368,22 +371,22 @@ Production requires:
 - deny-by-default OSC/DCS/custom browser side effects;
 - explicit gesture for clipboard and safe hyperlink navigation;
 - size-aware paste confirmation;
-- no raw target content or API key in logs, analytics, DOM attributes, URLs, or persistent storage;
+- no raw target content or API key in logs, analytics, DOM attributes, URLs, or Browser persistence other than the one fixed same-origin `localStorage` entry;
 - exact SPA fallback exclusions.
 
-Same-origin XSS can steal the in-memory API key and obtains complete deployment authority. Browser security is therefore a bastion boundary.
+Same-origin XSS or Browser-profile compromise can steal the persisted API key and obtains complete Deployment authority after fresh Server verification. Browser and OS-profile security are therefore part of the bastion boundary.
 
 ## 13. Failure and backpressure
 
 - Invalid/unauthenticated HTTP input fails before database/target side effects.
 - Invalid or late WebSocket auth closes before Attachment allocation.
 - WebSocket/internal-owner-WSS protocol fault or slow Browser closes only that one-hop Attachment and leaves sibling page-memory workspace tabs independent.
-- Closing one workspace tab disposes only that Attachment; Browser reload, logout, page close, or navigation away clears the API key and every page-local tab but leaves target tmux.
+- Closing one workspace tab disposes only that Attachment; Browser reload, logout, page close, or navigation away clears every page-local tab but leaves target tmux; logout and authentication failure additionally attempt saved-key removal and visibly report storage failure.
 - Internal SPA navigation retains the key and workspace tabs and does not reconnect or reauthenticate them.
 - Non-owner Browser/API ingress loss closes only connections through it; current owner and target remain; a still-open page reconnects through the Deployment origin.
 - Owner loss/fence closes its Relay/Attachment/SSH/tmux/writer state; after node-lease invalidity Relay claims a higher connection epoch and Browser performs fresh origin authentication/probe/selection.
 - A valid owner unreachable from Browser/API ingress returns `owner_unreachable`; no automatic retry steals it, and the operator fences/stops/isolates the owner and waits for lease expiry.
-- Ordinary node restart with an unchanged key closes affected attachments, but a still-open page may use its in-memory key for fresh WebSocket authentication; cluster-wide key replacement makes that candidate fail and clear, while reload/logout/page close/navigation away always requires re-entry.
+- Ordinary node or Browser restart with an unchanged key closes affected attachments, then a still-open page or later load may use the in-memory/restored key for fresh authentication; cluster-wide key replacement makes that candidate fail and clear, while explicit logout always requires re-entry.
 - Node join does not move existing owners or Attachments, exposes no node selection to Browser, and creates no rebalance.
 - Machine/credential invalidation is serialized through the current owner or delayed until lease invalidity, then closes affected live access without target cleanup.
 - Ambiguous target or internal owner-WSS operations are never replayed.
@@ -393,17 +396,17 @@ Same-origin XSS can steal the in-memory API key and obtains complete deployment 
 
 Conformance proves:
 
-- the only human/API credential paths are per-request Bearer and the attachment WebSocket first frame, with no credential exchange, persistence, node redirect, or fallback;
+- the only Server-accepted human/API credential paths are per-request Bearer and the attachment WebSocket first frame, with no credential exchange, Server session, node redirect, or fallback; Browser persistence is limited to the same raw key in one fixed same-origin `localStorage` entry;
 - Relay enrollment parses only a token-only first frame before bounded digest resolution, then exactly one setup frame on the same accepting connection, with no pre-token setup allocation, persisted coordinator/challenge/proof, remote placement, or token forwarding;
 - each implemented/changed public and internal owner-WSS surface commits one reviewed versioned schema/error/status/close-code artifact consumed by Browser/Server/tests as applicable;
 - every protected HTTP request independently validates Bearer before resource/owner lookup, and raw Bearer never crosses internal owner-WSS routing;
 - first-frame WebSocket tests allocate no Machine/owner/owner-WSS/route/SSH/tmux/writer state before auth, reject every other pre-auth sequence, clear key bytes, and never log them;
 - owner-WSS tests require TLS plus cluster authentication and exact incarnation/config/connection epochs before allocation; both streamed Browser traffic and one-shot typed API requests use that same WSS challenge mode, while local-owner tests prove the same application semantics without a network hop;
-- Browser key never enters Web storage, URL, cookie, service worker, internal challenge/HMAC transcript, logs, analytics, or serialized state;
+- Browser key enters only the fixed same-origin `localStorage` entry and active page memory; it never enters `sessionStorage`, IndexedDB, Cache Storage, URL, cookie, service worker, internal challenge/HMAC transcript, logs, analytics, or another serialized state;
 - Browser never stores or selects a Server node; load-balancer stickiness is optional; ingress/owner loss reconnects through the same origin;
 - generated credential APIs accept no private-key body or algorithm selector and never return private material or proxy it to an owner;
 - malformed, oversized, stale incarnation/connection/attachment epoch, unknown-version, owner-WSS loss, and slow-client cases fail boundedly;
-- focused Web unit/type/build checks cover the login boundary, generated attachment parsing, stale connection-attempt rejection, close diagnostics, and page-memory-only state declarations; real target operations use versioned attachment-WebSocket clients without browser automation;
+- focused Web unit/type/build checks cover API-key storage isolation/cleanup, the login boundary, generated attachment parsing, stale connection-attempt rejection, close diagnostics, and page-memory-only workspace state; real target operations use versioned attachment-WebSocket clients without browser automation;
 - safe transient retry obeys capped `retry_after`, every replacement returns to a fresh chooser, and no writer/input/mutation is restored or replayed;
 - writer/takeover/rehydration/connection-epoch/no-replay behavior matches [04];
-- reload/logout/page close/navigation away requires API-key re-entry; internal SPA navigation does not; ordinary unchanged-key node restart may reuse only the still-open page-memory candidate; coordinated key replacement rejects it; target work survives every case.
+- reload/page close/navigation away cancels pending validation, clears workspace state, and revalidates a valid saved key on a later load; logout or authentication failure clears page authority, attempts saved-key removal with visible failure handling, and requires re-entry; internal SPA navigation retains page state; coordinated key replacement rejects the old candidate and triggers removal; target work survives every case.

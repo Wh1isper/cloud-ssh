@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
+import {
+  API_KEY_LENGTH,
+  clearStoredApiKey,
+  isValidApiKey,
+  readStoredApiKey,
+  storeApiKey,
+  type StoredApiKeyResult,
+} from "./auth-storage";
 import { ApiError, AuthenticationError, createApiClient, type ApiClient } from "./client";
 import { PUBLIC_CONTRACT_VERSION } from "./generated/contracts";
 import type {
@@ -39,99 +47,375 @@ interface EnrollmentDisclosure {
 }
 
 const MAX_WORKSPACE_TABS = 16;
+const API_KEY_VALIDATION_TIMEOUT_MS = 10_000;
+const STORAGE_READ_WARNING =
+  "Saved access is unavailable because this browser blocked local storage. You can still sign in, but OwlMux may not remember this key.";
+const STORAGE_SAVE_WARNING =
+  "Access is open, but this browser could not save the API key. A previous saved value may remain; clear site data before leaving this device and be prepared to enter the current key again.";
+const STORAGE_CLEAR_WARNING =
+  "This browser could not remove the saved API key. Clear site data for this origin before leaving this device.";
+const INVALID_STORAGE_CLEAR_WARNING =
+  "This browser could not remove a malformed saved API key. Clear site data for this origin before leaving this device.";
+
+type AuthenticationSource = "login" | "restore";
+
+function initialStorageWarning(result: StoredApiKeyResult): string {
+  if (result.status === "unavailable") return STORAGE_READ_WARNING;
+  if (result.status === "invalid" && result.removalFailed) {
+    return INVALID_STORAGE_CLEAR_WARNING;
+  }
+  return "";
+}
 
 export function App() {
   const [client, setClient] = useState<ApiClient | null>(null);
   const [candidate, setCandidate] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
+  const [keyPersistenceConfirmed, setKeyPersistenceConfirmed] = useState(false);
+  const [loginPending, setLoginPending] = useState(false);
+  const [restorePending, setRestorePending] = useState(true);
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const activeClientRef = useRef<ApiClient | null>(null);
+  const pendingClientRef = useRef<ApiClient | null>(null);
+  const authenticationGenerationRef = useRef(0);
+  const pageActiveRef = useRef(false);
 
-  const logout = useCallback(() => {
-    client?.dispose();
-    setClient(null);
-    setCandidate("");
-    setLoginError("");
-    window.history.replaceState(null, "", "/login");
-  }, [client]);
+  const invalidatePendingAuthentication = useCallback(() => {
+    authenticationGenerationRef.current += 1;
+    pendingClientRef.current?.dispose();
+    pendingClientRef.current = null;
+  }, []);
 
   useEffect(() => {
-    const dispose = () => client?.dispose();
-    const rejectRestoredPage = (event: PageTransitionEvent) => {
-      if (event.persisted) logout();
+    pageActiveRef.current = true;
+    const leavePage = () => {
+      pageActiveRef.current = false;
+      invalidatePendingAuthentication();
+      activeClientRef.current?.dispose();
+      activeClientRef.current = null;
     };
-    window.addEventListener("pagehide", dispose);
-    window.addEventListener("pageshow", rejectRestoredPage);
+    const reloadRestoredPage = (event: PageTransitionEvent) => {
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener("pagehide", leavePage);
+    window.addEventListener("pageshow", reloadRestoredPage);
     return () => {
-      window.removeEventListener("pagehide", dispose);
-      window.removeEventListener("pageshow", rejectRestoredPage);
+      window.removeEventListener("pagehide", leavePage);
+      window.removeEventListener("pageshow", reloadRestoredPage);
+      leavePage();
     };
-  }, [client, logout]);
+  }, [invalidatePendingAuthentication]);
 
-  async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const next = createApiClient(candidate);
-    setCandidate("");
+  const authenticate = useCallback(async (apiKey: string, source: AuthenticationSource) => {
+    const generation = ++authenticationGenerationRef.current;
+    pendingClientRef.current?.dispose();
+    const next = createApiClient(apiKey);
+    pendingClientRef.current = next;
+    if (source === "login") {
+      setLoginPending(true);
+    } else {
+      setRestorePending(true);
+    }
+    setLoginError("");
+
+    let timedOut = false;
+    let timeout = 0;
+    const validationTimeout = new Promise<never>((_resolve, reject) => {
+      timeout = window.setTimeout(() => {
+        if (
+          pageActiveRef.current &&
+          authenticationGenerationRef.current === generation &&
+          pendingClientRef.current === next
+        ) {
+          timedOut = true;
+        }
+        next.dispose();
+        reject(new Error("Deployment verification timed out"));
+      }, API_KEY_VALIDATION_TIMEOUT_MS);
+    });
+
+    const isCurrent = () =>
+      pageActiveRef.current && authenticationGenerationRef.current === generation;
+
     try {
-      await next.deployment();
+      await Promise.race([next.deployment(), validationTimeout]);
+      if (!isCurrent()) {
+        next.dispose();
+        return;
+      }
+      pendingClientRef.current = null;
+      activeClientRef.current = next;
+      const persistenceConfirmed = source === "restore" || storeApiKey(apiKey);
+      setKeyPersistenceConfirmed(persistenceConfirmed);
+      setStorageWarning(persistenceConfirmed ? "" : STORAGE_SAVE_WARNING);
+      setCandidate("");
+      setApiKeyVisible(false);
       setLoginError("");
-      window.history.replaceState(null, "", "/workspaces");
+      const route = normalizeRoute(window.location.pathname);
+      window.history.replaceState(
+        null,
+        "",
+        source === "login" || route === "/login" ? "/workspaces" : route,
+      );
       setClient(next);
     } catch (reason) {
       next.dispose();
-      setLoginError(
-        reason instanceof AuthenticationError
-          ? "Authentication failed. Re-enter the current Deployment API key."
-          : "The Deployment could not be reached. Verify its health and try again.",
-      );
+      if (!isCurrent()) return;
+      pendingClientRef.current = null;
+      if (reason instanceof AuthenticationError) {
+        setStorageWarning(clearStoredApiKey() ? "" : STORAGE_CLEAR_WARNING);
+        setCandidate("");
+        setApiKeyVisible(false);
+        setLoginError(
+          source === "restore"
+            ? "The saved API key is no longer valid. Enter the current key."
+            : "Authentication failed. Enter the current Deployment API key.",
+        );
+      } else {
+        setCandidate(apiKey);
+        setLoginError(
+          timedOut
+            ? "Deployment verification timed out. Verify Deployment health and try again."
+            : source === "restore"
+              ? "The Deployment could not be reached. Your saved key is still available; verify Deployment health and try again."
+              : "The Deployment could not be reached. Verify its health and try again.",
+        );
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      if (isCurrent()) {
+        setLoginPending(false);
+        setRestorePending(false);
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const stored = readStoredApiKey();
+      setStorageWarning(initialStorageWarning(stored));
+      if (stored.status === "available") {
+        void authenticate(stored.apiKey, "restore");
+      } else {
+        setRestorePending(false);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [authenticate]);
+
+  const clearAuthenticatedPage = useCallback(() => {
+    invalidatePendingAuthentication();
+    activeClientRef.current?.dispose();
+    activeClientRef.current = null;
+    setClient(null);
+    setKeyPersistenceConfirmed(false);
+    setCandidate("");
+    setApiKeyVisible(false);
+    setLoginPending(false);
+    setRestorePending(false);
+    window.history.replaceState(null, "", "/login");
+  }, [invalidatePendingAuthentication]);
+
+  const logout = useCallback(() => {
+    setStorageWarning(clearStoredApiKey() ? "" : STORAGE_CLEAR_WARNING);
+    setLoginError("");
+    clearAuthenticatedPage();
+  }, [clearAuthenticatedPage]);
+
+  const rejectAuthentication = useCallback(() => {
+    setStorageWarning(clearStoredApiKey() ? "" : STORAGE_CLEAR_WARNING);
+    setLoginError("Authentication failed. Enter the current Deployment API key.");
+    clearAuthenticatedPage();
+  }, [clearAuthenticatedPage]);
+
+  function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loginPending || pendingClientRef.current !== null) return;
+    if (!isValidApiKey(candidate)) {
+      setLoginError(
+        "Enter a complete API key with the owlmux_sk_v1_ prefix and canonical 32-byte payload.",
+      );
+      return;
+    }
+    void authenticate(candidate, "login");
   }
 
   if (client === null) {
     return (
-      <main className="login-shell">
-        <section className="login-card">
-          <div className="brand-mark" aria-hidden="true">
-            O
-          </div>
-          <p className="section-kicker">OwlMux · {PUBLIC_CONTRACT_VERSION}</p>
-          <h1>Your target work stays where it belongs.</h1>
-          <p className="login-intro">
-            Open your saved Hosts and continue target-owned tmux sessions from this Browser.
-          </p>
-          <form className="login-form" onSubmit={login}>
-            <label htmlFor="api-key">Deployment API key</label>
-            <input
-              autoComplete="off"
-              autoFocus
-              id="api-key"
-              name="api-key"
-              onChange={(event) => setCandidate(event.currentTarget.value)}
-              required
-              spellCheck={false}
-              type="password"
-              value={candidate}
-            />
-            <button className="button button-primary button-large" type="submit">
-              Open OwlMux
-            </button>
-          </form>
-          <p className="memory-notice">
-            The key stays only in this page's memory. Reload, navigation away, authentication
-            failure, and logout clear it.
-          </p>
-          {loginError && (
-            <div className="error-banner" role="alert">
-              {loginError}
-            </div>
-          )}
-        </section>
-      </main>
+      <LoginExperience
+        apiKeyVisible={apiKeyVisible}
+        candidate={candidate}
+        error={loginError}
+        loginPending={loginPending}
+        onCandidateChange={setCandidate}
+        onSubmit={login}
+        onToggleApiKey={() => setApiKeyVisible((visible) => !visible)}
+        restorePending={restorePending}
+        warning={storageWarning}
+      />
     );
   }
 
-  return <AuthenticatedApp client={client} logout={logout} />;
+  return (
+    <AuthenticatedApp
+      client={client}
+      keyPersistenceConfirmed={keyPersistenceConfirmed}
+      logout={logout}
+      onAuthenticationFailure={rejectAuthentication}
+      storageWarning={storageWarning}
+    />
+  );
 }
 
-function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () => void }) {
+function LoginExperience({
+  apiKeyVisible,
+  candidate,
+  error,
+  loginPending,
+  onCandidateChange,
+  onSubmit,
+  onToggleApiKey,
+  restorePending,
+  warning,
+}: {
+  apiKeyVisible: boolean;
+  candidate: string;
+  error: string;
+  loginPending: boolean;
+  onCandidateChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onToggleApiKey: () => void;
+  restorePending: boolean;
+  warning: string;
+}) {
+  return (
+    <main className="login-shell">
+      <section className="login-hero" aria-labelledby="login-title">
+        <div className="login-brand">
+          <BrandMark />
+          <span>OwlMux</span>
+        </div>
+        <div className="login-copy">
+          <p className="section-kicker">Target-owned terminal roaming</p>
+          <h1 id="login-title">Your terminal sessions stay on the target.</h1>
+          <p>
+            Reconnect to durable tmux workspaces without moving process ownership into the gateway.
+          </p>
+        </div>
+        <div className="login-principles" aria-label="OwlMux principles">
+          <div>
+            <strong>Target-owned</strong>
+            <span>tmux keeps sessions and processes alive.</span>
+          </div>
+          <div>
+            <strong>One boundary</strong>
+            <span>Your Deployment key unlocks this origin.</span>
+          </div>
+          <div>
+            <strong>Fresh attachment</strong>
+            <span>Each workspace reconnects to current target state.</span>
+          </div>
+        </div>
+      </section>
+
+      <aside className="login-panel" aria-label="Deployment access">
+        <section className="login-card" aria-busy={restorePending || loginPending}>
+          {restorePending ? (
+            <div className="launch-state" role="status" aria-live="polite">
+              <BrandMark />
+              <p className="section-kicker">Browser access</p>
+              <h2>Opening OwlMux</h2>
+              <p>Checking for saved access and verifying it before this Deployment opens.</p>
+              <span className="launch-indicator" aria-hidden="true" />
+            </div>
+          ) : (
+            <>
+              <header className="login-card-header">
+                <p className="section-kicker">OwlMux · contract {PUBLIC_CONTRACT_VERSION}</p>
+                <h2>Open your deployment</h2>
+                <p>Enter the single API key configured on every Server node.</p>
+              </header>
+              {error && (
+                <div className="error-banner login-error" role="alert">
+                  {error}
+                </div>
+              )}
+              {warning && (
+                <div className="warning-banner login-warning" role="alert">
+                  {warning}
+                </div>
+              )}
+              <form className="login-form" onSubmit={onSubmit}>
+                <label htmlFor="api-key">Deployment API key</label>
+                <div className="api-key-field">
+                  <input
+                    aria-describedby="api-key-help"
+                    autoComplete="off"
+                    autoFocus
+                    id="api-key"
+                    maxLength={API_KEY_LENGTH}
+                    name="api-key"
+                    onChange={(event) => onCandidateChange(event.currentTarget.value)}
+                    placeholder="owlmux_sk_v1_…"
+                    required
+                    spellCheck={false}
+                    type={apiKeyVisible ? "text" : "password"}
+                    value={candidate}
+                  />
+                  <button
+                    aria-controls="api-key"
+                    className="api-key-toggle"
+                    onClick={onToggleApiKey}
+                    type="button"
+                  >
+                    {apiKeyVisible ? "Hide" : "Show"}
+                  </button>
+                </div>
+                <p className="field-help" id="api-key-help">
+                  The value starts with <code>owlmux_sk_v1_</code> and grants full Deployment
+                  access.
+                </p>
+                <button
+                  className="button button-primary button-large login-submit"
+                  disabled={loginPending}
+                  type="submit"
+                >
+                  {loginPending ? "Checking access…" : "Open OwlMux"}
+                </button>
+              </form>
+              <div className="storage-notice">
+                <strong>Browser storage</strong>
+                <p>
+                  After verification, OwlMux tries to save the key only for this origin. Log out or
+                  an authentication failure attempts to remove it; any storage failure is shown.
+                </p>
+              </div>
+            </>
+          )}
+        </section>
+      </aside>
+    </main>
+  );
+}
+
+function BrandMark() {
+  return <img className="brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />;
+}
+
+function AuthenticatedApp({
+  client,
+  keyPersistenceConfirmed,
+  logout,
+  onAuthenticationFailure,
+  storageWarning,
+}: {
+  client: ApiClient;
+  keyPersistenceConfirmed: boolean;
+  logout: () => void;
+  onAuthenticationFailure: () => void;
+  storageWarning: string;
+}) {
   const [deployment, setDeployment] = useState<DeploymentPresentation | null>(null);
   const [auditEvents, setAuditEvents] = useState<Array<AuditEventSummary>>([]);
   const [credentials, setCredentials] = useState<Array<CredentialSummary>>([]);
@@ -169,7 +453,7 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
   const presentError = useCallback(
     (reason: unknown, fallback: string) => {
       if (reason instanceof AuthenticationError) {
-        logout();
+        onAuthenticationFailure();
       } else if (reason instanceof ApiError && reason.outcomeUnknown) {
         refreshGenerationRef.current += 1;
         outcomeUnknownRef.current = true;
@@ -185,7 +469,7 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
         setError(reason instanceof Error ? reason.message : fallback);
       }
     },
-    [logout],
+    [onAuthenticationFailure],
   );
 
   const refresh = useCallback(
@@ -384,6 +668,12 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
     <div className={terminalVisible ? "authenticated-shell is-terminal" : "authenticated-shell"}>
       <AppHeader deployment={deployment} logout={logout} navigate={navigate} route={route} />
 
+      {storageWarning && (
+        <div className="global-warning" role="alert">
+          {storageWarning}
+        </div>
+      )}
+
       {route === "/workspaces" && workspaceTabs.length > 0 && (
         <WorkspaceTabs
           activeId={activeWorkspaceId}
@@ -444,7 +734,7 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
             <InteractiveWorkspace
               client={client}
               machine={tab.machine}
-              onAuthenticationFailure={logout}
+              onAuthenticationFailure={onAuthenticationFailure}
               onClose={() => closeWorkspace(tab.id)}
               onTitleChange={(title) => updateWorkspaceTitle(tab.id, title)}
               visible={route === "/workspaces" && tab.id === activeWorkspaceId}
@@ -557,6 +847,7 @@ function AuthenticatedApp({ client, logout }: { client: ApiClient; logout: () =>
       {route === "/deployment" && (
         <DeploymentPage
           deployment={deployment}
+          keyPersistenceConfirmed={keyPersistenceConfirmed}
           logout={logout}
           workspaceCount={workspaceTabs.length}
         />
@@ -607,9 +898,7 @@ function AppHeader({
   return (
     <header className="app-header">
       <button className="brand" onClick={() => navigate("/workspaces")} type="button">
-        <span className="brand-mark" aria-hidden="true">
-          O
-        </span>
+        <BrandMark />
         <span>OwlMux</span>
       </button>
       <nav className="primary-navigation" aria-label="OwlMux">
@@ -1545,10 +1834,12 @@ function AuditPage({ events, loading }: { events: Array<AuditEventSummary>; load
 
 function DeploymentPage({
   deployment,
+  keyPersistenceConfirmed,
   logout,
   workspaceCount,
 }: {
   deployment: DeploymentPresentation | null;
+  keyPersistenceConfirmed: boolean;
   logout: () => void;
   workspaceCount: number;
 }) {
@@ -1558,7 +1849,7 @@ function DeploymentPage({
         <div>
           <p className="section-kicker">Management</p>
           <h1>Deployment</h1>
-          <p>Safe current Deployment and Browser-session information.</p>
+          <p>Safe current Deployment and Browser-access information.</p>
         </div>
       </header>
       <section className="settings-card">
@@ -1576,11 +1867,12 @@ function DeploymentPage({
       <section className="settings-card">
         <h2>Browser authentication</h2>
         <p>
-          The API key and workspace tabs exist only in this page. Logout closes OwlMux connections
-          and clears the key without stopping target work.
+          {keyPersistenceConfirmed
+            ? "The current API key is confirmed in local storage for this origin; workspace tabs remain in this page only. Logout closes page access and OwlMux connections, then attempts to remove the saved copy, without stopping target work."
+            : "This browser could not confirm that the current API key was saved; a previous saved value may still remain. Logout closes page access and OwlMux connections, then attempts to remove the saved copy, without stopping target work."}
         </p>
         <button className="button button-danger" onClick={logout} type="button">
-          Log out and clear key
+          Log out
         </button>
       </section>
     </main>
