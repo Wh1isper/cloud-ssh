@@ -46,6 +46,30 @@ load_release() {
     esac
 }
 
+wait_for_created_release() {
+    local attempt
+    local load_status
+    local max_attempts=15
+    for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+        load_status=0
+        load_release || load_status=$?
+        case "$load_status" in
+            0)
+                return 0
+                ;;
+            1)
+                if ((attempt < max_attempts)); then
+                    sleep 2
+                fi
+                ;;
+            *)
+                return "$load_status"
+                ;;
+        esac
+    done
+    return 1
+}
+
 validate_release_identity() {
     local actual_tag
     local actual_prerelease
@@ -82,9 +106,11 @@ if [[ "$load_status" -ne 0 ]]; then
     fi
     create_status=0
     gh release create "$release_tag" "${args[@]}" || create_status=$?
-    if ! load_release; then
+    recovery_status=0
+    wait_for_created_release || recovery_status=$?
+    if [[ "$recovery_status" -ne 0 ]]; then
         echo "GitHub Release creation failed with status $create_status and no recoverable release exists" >&2
-        exit 1
+        exit "$recovery_status"
     fi
 fi
 
